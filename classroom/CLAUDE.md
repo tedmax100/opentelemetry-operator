@@ -24,6 +24,7 @@
 | `05-reconcile-loop.md` | Create/Update/Delete 完整實作、OwnerReference、樂觀鎖 | `internal/controllers/common.go`、`internal/manifests/mutate.go` |
 | `06-auto-instrumentation.md` | 各語言 agent 注入差異、env var 優先級 | `internal/instrumentation/*.go` |
 | `07-watch-informer-internals.md` | HTTP Watch 機制、Reflector/DeltaFIFO/Indexer、Predicate | `internal/controllers/targetallocator_controller.go:209-237` |
+| `08-key-libraries.md` | 各 library 的職責、用途與真實程式碼範例 | `internal/controllers/common.go`、`internal/manifests/mutate.go`、`pkg/collector/upgrade/` |
 
 ---
 
@@ -82,3 +83,4 @@
 - **OpAMP Bridge**：遠端管理協議的完整流程（`cmd/operator-opamp-bridge/`）
 - **OwnerReference vs Finalizer**：兩種清理機制的選擇時機（第 1、5 章有提及）
 - **CRD Webhook 驗證**：`apis/v1beta1/opentelemetrycollector_webhook.go` 的邏輯
+- **Target Allocator 用到的 library**：`buraksezer/consistent`（一致性雜湊）、`prometheus/prometheus`（服務發現）

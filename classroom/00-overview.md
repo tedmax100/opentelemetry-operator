@@ -109,6 +109,7 @@ opentelemetry-operator/
 | [第 5 章](./05-reconcile-loop.md) | Reconcile 迴圈 | Create / Update / Delete 的完整流程 |
 | [第 6 章](./06-auto-instrumentation.md) | Auto Instrumentation 深度解析 | 各語言注入差異、env var 優先級、OTEL_SERVICE_NAME 推導 |
 | [第 7 章](./07-watch-informer-internals.md) | Watch 機制與 Informer 內部 | HTTP Watch、Reflector/DeltaFIFO/Indexer 管線、Predicate 過濾 |
+| [第 8 章](./08-key-libraries.md) | 重要 Library 解析 | controller-runtime、client-go、apimachinery、mergo、semver、logr |
 
 ---
 
