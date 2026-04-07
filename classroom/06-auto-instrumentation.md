@@ -731,11 +731,25 @@ spec:
 
 ## 練習 4：手動觀察各語言的差異
 
-如果你有 cluster，分別注入 Java 和 Go，比較兩者的 Pod spec 差異：
+需要 Operator 已部署在 cluster 中（Webhook 才會生效）。若尚未部署，先完成[第 4 章練習 3 的 k3d 環境準備](#練習-3手動觀察注入結果)。
+
+> **Go 注意事項：** Go instrumentation 採用 eBPF，需要 `privileged` 權限，k3d 預設支援。但 Go Pod 在沒有真正 Go binary 的情況下 sidecar 會 crash，`sleep` 範例只能觀察 spec，不能實際運作。
 
 ```bash
-# 建立 Instrumentation CR
-kubectl apply -f classroom/examples/instrumentation.yaml  # 自己建立
+# 建立 Instrumentation CR（替換掉佔位路徑）
+kubectl apply -f - <<EOF
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: my-instrumentation
+  namespace: default
+spec:
+  exporter:
+    endpoint: http://otelcol:4317
+  propagators:
+    - tracecontext
+    - baggage
+EOF
 
 # 注入 Java
 kubectl apply -f - <<EOF

@@ -375,16 +375,25 @@ func (r *OpenTelemetryCollectorReconciler) SetupCaches(cluster cluster.Cluster) 
 
 ### 問題 3（動手）
 
-用 `curl` 親眼看一次 HTTP Watch（需要有 `kubectl` 可用的環境）：
+用 `curl` 親眼看一次 HTTP Watch。需要有 cluster 且已安裝 CRD（`make install`）。
 
 ```bash
-# 取得 API Server 的位置
+# 確認使用 otel-lab cluster（若還沒建，參考第 1 章練習 2）
+kubectl config use-context k3d-otel-lab
+
+# 確認 CRD 已安裝（看到 opentelemetrycollectors 就對了）
+kubectl get crd | grep opentelemetry
+```
+
+```bash
+# 取得 API Server 位置（確認 cluster 正常）
 kubectl cluster-info
 
-# 用 kubectl proxy 在本地開一個代理（不用處理 TLS）
+# 在本地開一個反向代理：把 localhost:8001 轉發到 API Server
+# 這樣就不用自己處理 TLS 憑證與 token
 kubectl proxy --port=8001 &
 
-# 發起 Watch 請求，然後用 kubectl 在另一個終端建立或修改資源
+# 對 API Server 發起 Watch 長連接請求（-N 停用 curl buffer，讓回應即時顯示）
 curl -N "http://localhost:8001/apis/opentelemetry.io/v1beta1/opentelemetrycollectors?watch=true"
 ```
 

@@ -209,13 +209,28 @@ Finalizer 是一個標記，告訴 k8s「在真正刪除這個物件前，先等
 
 ## 練習 2：在本地觀察 Reconcile
 
-如果你有 Kubernetes cluster（或 kind），可以嘗試：
+### k3d 環境準備
 
 ```bash
-# 安裝 CRD
+# 建立一個名為 otel-lab 的輕量本地 cluster（在 Docker 內跑 k3s）
+k3d cluster create otel-lab
+
+# 確認 kubeconfig 已切換到這個 cluster
+kubectl config use-context k3d-otel-lab
+
+# 確認 node 正常
+kubectl get nodes
+```
+
+> `k3d cluster create` 會自動更新 `~/.kube/config`，之後的 `kubectl` 和 `make` 指令都會指向這個 cluster。
+
+```bash
+# 把 CRD（OpenTelemetryCollector、Instrumentation...）安裝進 cluster
+# 讓 k8s 認識這些自訂資源類型
 make install
 
-# 本地執行 operator（會顯示 log）
+# 在本地執行 operator（不部署進 cluster，直接跑 binary）
+# 會顯示即時 log，方便觀察 Reconcile 觸發
 make run
 
 # 另一個 terminal，建立一個 CR
