@@ -98,6 +98,59 @@ opentelemetry-operator/
 
 ## 學習路徑
 
+```mermaid
+mindmap
+  root((OTel Operator<br/>程式碼導讀))
+    基礎概念
+      第1章 Operator Pattern
+        為什麼需要 Operator
+        控制迴圈 Control Loop
+        冪等性 Idempotency
+        SetupWithManager
+      第2章 CRD 資料模型
+        OpenTelemetryCollector v1beta1
+        Instrumentation v1alpha1
+        TargetAllocator v1alpha1
+        OpAMPBridge v1alpha1
+        kubebuilder markers
+    核心機制
+      第3章 Manifest 生成
+        Spec → k8s 資源
+        純函式設計
+        工廠模式 Build()
+        mutate 策略
+      第5章 Reconcile 迴圈
+        CreateOrUpdate
+        OwnerReference
+        樂觀鎖衝突處理
+        Finalizer 清理
+    注入與觀測
+      第4章 Webhook 注入
+        Admission Webhook
+        MutatingWebhook
+        JSON Patch
+        initContainer 注入
+      第6章 Auto Instrumentation
+        annotation 驅動
+        各語言注入差異
+        env var 優先級
+        OTEL_SERVICE_NAME
+    底層原理
+      第7章 Watch 機制
+        HTTP Watch 長連接
+        Reflector
+        DeltaFIFO
+        Indexer 本地快取
+        Predicate 過濾
+      第8章 重要 Library
+        controller-runtime
+        client-go retry
+        apimachinery
+        mergo 合併
+        semver 版本比較
+        go-logr 結構化日誌
+```
+
 按照以下順序閱讀，每章都有對應的練習：
 
 | 章節 | 檔案 | 重點 |
