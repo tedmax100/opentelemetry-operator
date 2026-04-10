@@ -149,6 +149,22 @@ mindmap
         mergo 合併
         semver 版本比較
         go-logr 結構化日誌
+    動手實作
+      第9章 從零建立 Operator
+        kubebuilder 腳手架
+        FooApp CRD 定義
+        Reconcile 實作
+        OwnerReference 清理
+      第10章 部署到 k3d
+        建立本機 cluster
+        image import 技巧
+        RBAC 驗證
+        開發迭代迴圈
+      第11章 升級與異動機制
+        CR Spec 異動
+        Operator 版本升級
+        CRD Schema 升級
+        樂觀鎖衝突處理
 ```
 
 按照以下順序閱讀，每章都有對應的練習：
@@ -163,6 +179,9 @@ mindmap
 | [第 6 章](./06-auto-instrumentation.md) | Auto Instrumentation 深度解析 | 各語言注入差異、env var 優先級、OTEL_SERVICE_NAME 推導 |
 | [第 7 章](./07-watch-informer-internals.md) | Watch 機制與 Informer 內部 | HTTP Watch、Reflector/DeltaFIFO/Indexer 管線、Predicate 過濾 |
 | [第 8 章](./08-key-libraries.md) | 重要 Library 解析 | controller-runtime、client-go、apimachinery、mergo、semver、logr |
+| [第 9 章](./09-build-simple-operator.md) | 從零建立一個簡單的 Operator | kubebuilder 腳手架、FooApp CRD、Reconcile 實作、OwnerReference |
+| [第 10 章](./10-deploy-to-k3d.md) | 部署 Operator 到 k3d 環境 | image import、RBAC 驗證、開發迭代迴圈 |
+| [第 11 章](./11-upgrade-and-change.md) | 升級與異動機制 | CR Spec 異動、Operator 版本升級、CRD Schema 升級、樂觀鎖 |
 
 ---
 

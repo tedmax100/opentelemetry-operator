@@ -233,6 +233,10 @@ Image string  // 可選欄位
 
 ---
 
+                                                                                                                                                                                                                  
+kubectl patch kafkanodepool dual-role-pool -n cattle-logging-system \                                                                                                                                          --type=merge                                                                                                                    -p '{"spec":{"storage":{"volumes":[{"id":0,"type":"persistent-claim","size":"8Gi","deleteClaim":false,"class":"nfs-csi"}]}}}'                                                                                   
+    
+
 ## 2.7 四個 CR 的關係
 
 ```
