@@ -120,6 +120,15 @@ WARNING: The per-node strategy currently ignores targets without a Node, like co
         </td>
         <td>false</td>
       </tr><tr>
+        <td><b>allowInsecureAuthSecrets</b></td>
+        <td>boolean</td>
+        <td>
+          AllowInsecureAuthSecrets controls whether auth secret values (e.g. basicAuth passwords)
+are served over plain HTTP without requiring mTLS. Only enable this when the target allocator
+endpoint is secured by a service mesh or equivalent transport-level security.<br/>
+        </td>
+        <td>false</td>
+      </tr><tr>
         <td><b>args</b></td>
         <td>map[string]string</td>
         <td>
@@ -272,6 +281,14 @@ Default is managed.<br/>
           <br/>
             <i>Enum</i>: managed, unmanaged<br/>
             <i>Default</i>: managed<br/>
+        </td>
+        <td>false</td>
+      </tr><tr>
+        <td><b><a href="#targetallocatorspecmtls">mtls</a></b></td>
+        <td>object</td>
+        <td>
+          Mtls defines the mTLS configuration for the target allocator.
+If enabled, the target allocator will communicate with the collector over mTLS.<br/>
         </td>
         <td>false</td>
       </tr><tr>
@@ -2762,7 +2779,6 @@ Note that this field cannot be set when spec.os.name is windows.<br/>
           procMount denotes the type of proc mount to use for the containers.
 The default value is Default which uses the container runtime defaults for
 readonly paths and masked paths.
-This requires the ProcMountType feature flag to be enabled.
 Note that this field cannot be set when spec.os.name is windows.<br/>
         </td>
         <td>false</td>
@@ -7943,7 +7959,6 @@ Note that this field cannot be set when spec.os.name is windows.<br/>
           procMount denotes the type of proc mount to use for the containers.
 The default value is Default which uses the container runtime defaults for
 readonly paths and masked paths.
-This requires the ProcMountType feature flag to be enabled.
 Note that this field cannot be set when spec.os.name is windows.<br/>
         </td>
         <td>false</td>
@@ -9586,6 +9601,44 @@ Name must be an IANA_SVC_NAME.<br/>
 </table>
 
 
+### TargetAllocator.spec.mtls
+<sup><sup>[↩ Parent](#targetallocatorspec)</sup></sup>
+
+
+
+Mtls defines the mTLS configuration for the target allocator.
+If enabled, the target allocator will communicate with the collector over mTLS.
+
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Description</th>
+            <th>Required</th>
+        </tr>
+    </thead>
+    <tbody><tr>
+        <td><b>enabled</b></td>
+        <td>boolean</td>
+        <td>
+          Enabled indicates whether to enable mTLS between the target allocator and the collector.<br/>
+        </td>
+        <td>false</td>
+      </tr><tr>
+        <td><b>useCertManager</b></td>
+        <td>boolean</td>
+        <td>
+          UseCertManager defines whether cert-manager should be used to provision certificates for mTLS.
+Defaults to true.<br/>
+          <br/>
+            <i>Default</i>: true<br/>
+        </td>
+        <td>false</td>
+      </tr></tbody>
+</table>
+
+
 ### TargetAllocator.spec.networkPolicy
 <sup><sup>[↩ Parent](#targetallocatorspec)</sup></sup>
 
@@ -10365,6 +10418,20 @@ PrometheusCR defines the configuration for the retrieval of PrometheusOperator C
         </td>
         <td>false</td>
       </tr><tr>
+        <td><b>denyFSAccessThroughSMs</b></td>
+        <td>boolean</td>
+        <td>
+          DenyFSAccessThroughSMs causes the Target Allocator to drop ServiceMonitor and
+PodMonitor endpoints that reference arbitrary files on the file system. When
+enabled, endpoints with bearerTokenFile, tlsConfig.caFile, tlsConfig.certFile,
+or tlsConfig.keyFile are dropped from the produced scrape configuration while
+the remaining endpoints are kept. This prevents tenants from stealing the
+Collector's service account token via ServiceMonitor bearerTokenFile
+references. This is the equivalent of ArbitraryFSAccessThroughSMs.Deny from
+the Prometheus Operator.<br/>
+        </td>
+        <td>false</td>
+      </tr><tr>
         <td><b>denyNamespaces</b></td>
         <td>[]string</td>
         <td>
@@ -10482,6 +10549,14 @@ Default: "30s"<br/>
         <td>
           ScrapeProtocols define the protocols to negotiate during a scrape. It tells clients the
 protocols supported by Prometheus in order of preference (from most to least preferred).<br/>
+        </td>
+        <td>false</td>
+      </tr><tr>
+        <td><b>secretNamespaces</b></td>
+        <td>[]string</td>
+        <td>
+          SecretNamespaces Namespaces to scope the watching of secrets for the Target Allocator.
+If not configured, defaults to the target allocator's own namespace.<br/>
         </td>
         <td>false</td>
       </tr><tr>
@@ -11670,7 +11745,6 @@ Note that this field cannot be set when spec.os.name is windows.<br/>
           procMount denotes the type of proc mount to use for the containers.
 The default value is Default which uses the container runtime defaults for
 readonly paths and masked paths.
-This requires the ProcMountType feature flag to be enabled.
 Note that this field cannot be set when spec.os.name is windows.<br/>
         </td>
         <td>false</td>
@@ -12650,8 +12724,7 @@ Deprecated: PhotonPersistentDisk is deprecated and the in-tree photonPersistentD
         <td>
           portworxVolume represents a portworx volume attached and mounted on kubelets host machine.
 Deprecated: PortworxVolume is deprecated. All operations for the in-tree portworxVolume type
-are redirected to the pxd.portworx.com CSI driver when the CSIMigrationPortworx feature-gate
-is on.<br/>
+are redirected to the pxd.portworx.com CSI driver.<br/>
         </td>
         <td>false</td>
       </tr><tr>
@@ -14795,8 +14868,7 @@ Ex. "ext4", "xfs", "ntfs". Implicitly inferred to be "ext4" if unspecified.<br/>
 
 portworxVolume represents a portworx volume attached and mounted on kubelets host machine.
 Deprecated: PortworxVolume is deprecated. All operations for the in-tree portworxVolume type
-are redirected to the pxd.portworx.com CSI driver when the CSIMigrationPortworx feature-gate
-is on.
+are redirected to the pxd.portworx.com CSI driver.
 
 <table>
     <thead>

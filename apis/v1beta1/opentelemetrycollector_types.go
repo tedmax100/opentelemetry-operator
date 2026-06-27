@@ -59,6 +59,12 @@ type OpenTelemetryCollectorStatus struct {
 	// Image indicates the container image to use for the OpenTelemetry Collector.
 	// +optional
 	Image string `json:"image,omitempty"`
+
+	// ObservedGeneration is the most recent generation observed for this OpenTelemetryCollector. It corresponds to the OpenTelemetryCollector's generation, which is updated on mutation by the API Server.
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Conditions represents the latest available observations of the OpenTelemetryCollector's current state.
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="!(self.mode == 'sidecar' && size(self.tolerations) > 0) || !has(self.tolerations)",message="the OpenTelemetry Collector mode is set to sidecar, which does not support the attribute 'tolerations'"
@@ -101,6 +107,11 @@ type OpenTelemetryCollectorSpec struct {
 	// Valid modes are: deployment, daemonset and statefulset.
 	// +optional
 	Ingress Ingress `json:"ingress,omitempty"`
+	// HttpRoute is used to specify how OpenTelemetry Collector is exposed via Gateway API HTTPRoute.
+	// This functionality is only available if one of the valid modes is set.
+	// Valid modes are: deployment, daemonset and statefulset.
+	// +optional
+	HttpRoute HttpRouteConfig `json:"httpRoute,omitempty"`
 	// NetworkPolicy defines the network policy to be applied to the OpenTelemetry Collector pods.
 	// +optional
 	NetworkPolicy NetworkPolicy `json:"networkPolicy,omitempty"`
@@ -138,6 +149,11 @@ type OpenTelemetryCollectorSpec struct {
 	// This is only applicable to Deployment mode.
 	// +optional
 	DeploymentUpdateStrategy appsv1.DeploymentStrategy `json:"deploymentUpdateStrategy,omitempty"`
+	// Command overrides the container entrypoint (Pod.spec.containers[].command). When omitted, the image ENTRYPOINT is used.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MinItems=1
+	Command []string `json:"command,omitempty"`
 }
 
 // TargetAllocatorEmbedded defines the configuration for the Prometheus target allocator, embedded in the
@@ -218,6 +234,11 @@ type TargetAllocatorEmbedded struct {
 	//
 	// +optional
 	PodDisruptionBudget *PodDisruptionBudgetSpec `json:"podDisruptionBudget,omitempty"`
+	// AllowInsecureAuthSecrets controls whether auth secret values (e.g. basicAuth passwords)
+	// are served over plain HTTP without requiring mTLS. Only enable this when the target allocator
+	// endpoint is secured by a service mesh or equivalent transport-level security.
+	// +optional
+	AllowInsecureAuthSecrets bool `json:"allowInsecureAuthSecrets,omitempty"`
 	// CollectorNotReadyGracePeriod defines the grace period after which a TargetAllocator stops considering a collector is target assignable.
 	// The default is 30s, which means that if a collector becomes not Ready, the target allocator will wait for 30 seconds before reassigning its targets. The assumption is that the state is temporary, and an expensive target reallocation should be avoided if possible.
 	//
@@ -232,6 +253,21 @@ type TargetAllocatorEmbedded struct {
 	// +kubebuilder:default:="30s"
 	// +kubebuilder:validation:Format:=duration
 	CollectorTargetReloadInterval *metav1.Duration `json:"collectorTargetReloadInterval,omitempty"`
+
+	// Mtls defines the mTLS configuration for the target allocator. If enabled, the target allocator will communicate with the collector over mTLS.
+	// +optional
+	Mtls *TargetAllocatorMTLS `json:"mtls,omitempty"`
+}
+
+type TargetAllocatorMTLS struct {
+	// Enabled indicates whether to enable mTLS between the target allocator and the collector.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+	// UseCertManager defines whether cert-manager should be used to provision certificates for mTLS.
+	// Defaults to true.
+	// +optional
+	// +kubebuilder:default:=true
+	UseCertManager *bool `json:"useCertManager,omitempty"`
 }
 
 // Probe defines the OpenTelemetry's pod probe config.

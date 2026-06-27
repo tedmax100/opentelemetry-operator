@@ -254,6 +254,13 @@ the operator will not automatically create a ServiceAccount for the OpAMPBridge.
         </td>
         <td>false</td>
       </tr><tr>
+        <td><b><a href="#opampbridgespectls">tls</a></b></td>
+        <td>object</td>
+        <td>
+          TLS configuration for the connection to the OpAMP backend server.<br/>
+        </td>
+        <td>false</td>
+      </tr><tr>
         <td><b><a href="#opampbridgespectolerationsindex">tolerations</a></b></td>
         <td>[]object</td>
         <td>
@@ -3162,7 +3169,6 @@ Note that this field cannot be set when spec.os.name is windows.<br/>
           procMount denotes the type of proc mount to use for the containers.
 The default value is Default which uses the container runtime defaults for
 readonly paths and masked paths.
-This requires the ProcMountType feature flag to be enabled.
 Note that this field cannot be set when spec.os.name is windows.<br/>
         </td>
         <td>false</td>
@@ -3477,6 +3483,41 @@ In addition, if HostProcess is true then HostNetwork must also be set to true.<b
 Defaults to the user specified in image metadata if unspecified.
 May also be set in PodSecurityContext. If set in both SecurityContext and
 PodSecurityContext, the value specified in SecurityContext takes precedence.<br/>
+        </td>
+        <td>false</td>
+      </tr></tbody>
+</table>
+
+
+### OpAMPBridge.spec.tls
+<sup><sup>[↩ Parent](#opampbridgespec)</sup></sup>
+
+
+
+TLS configuration for the connection to the OpAMP backend server.
+
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Description</th>
+            <th>Required</th>
+        </tr>
+    </thead>
+    <tbody><tr>
+        <td><b>insecure</b></td>
+        <td>boolean</td>
+        <td>
+          Insecure indicates whether the endpoint should use TLS or not.
+When true, TLS is completely disabled.<br/>
+        </td>
+        <td>false</td>
+      </tr><tr>
+        <td><b>insecure_skip_verify</b></td>
+        <td>boolean</td>
+        <td>
+          InsecureSkipVerify indicates to keep TLS but skip certificate validation.<br/>
         </td>
         <td>false</td>
       </tr></tbody>
@@ -4142,8 +4183,7 @@ Deprecated: PhotonPersistentDisk is deprecated and the in-tree photonPersistentD
         <td>
           portworxVolume represents a portworx volume attached and mounted on kubelets host machine.
 Deprecated: PortworxVolume is deprecated. All operations for the in-tree portworxVolume type
-are redirected to the pxd.portworx.com CSI driver when the CSIMigrationPortworx feature-gate
-is on.<br/>
+are redirected to the pxd.portworx.com CSI driver.<br/>
         </td>
         <td>false</td>
       </tr><tr>
@@ -6287,8 +6327,7 @@ Ex. "ext4", "xfs", "ntfs". Implicitly inferred to be "ext4" if unspecified.<br/>
 
 portworxVolume represents a portworx volume attached and mounted on kubelets host machine.
 Deprecated: PortworxVolume is deprecated. All operations for the in-tree portworxVolume type
-are redirected to the pxd.portworx.com CSI driver when the CSIMigrationPortworx feature-gate
-is on.
+are redirected to the pxd.portworx.com CSI driver.
 
 <table>
     <thead>

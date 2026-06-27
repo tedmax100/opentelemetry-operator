@@ -12,7 +12,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/google/uuid"
-	"github.com/oklog/ulid"
+	"github.com/oklog/ulid/v2"
 	"github.com/open-telemetry/opamp-go/protobufs"
 	"github.com/open-telemetry/opamp-go/server"
 	"github.com/open-telemetry/opamp-go/server/types"
@@ -67,13 +67,13 @@ func (s *OpAMPProxy) Start() error {
 	settings := server.StartSettings{
 		Settings: server.Settings{
 			CustomCapabilities: []string{},
-			Callbacks: server.CallbacksStruct{
-				OnConnectingFunc: func(*http.Request) types.ConnectionResponse {
+			Callbacks: types.Callbacks{
+				OnConnecting: func(*http.Request) types.ConnectionResponse {
 					return types.ConnectionResponse{
 						Accept: true,
-						ConnectionCallbacks: server.ConnectionCallbacksStruct{
-							OnMessageFunc:         s.onMessage,
-							OnConnectionCloseFunc: s.onDisconnect,
+						ConnectionCallbacks: types.ConnectionCallbacks{
+							OnMessage:         s.onMessage,
+							OnConnectionClose: s.onDisconnect,
 						},
 					}
 				},
@@ -112,7 +112,7 @@ func (s *OpAMPProxy) onDisconnect(conn types.Connection) {
 	}
 	delete(s.connections, conn)
 	// Tell listeners to get updates.
-	s.updatesChan <- struct{}{}
+	s.signalUpdate()
 }
 
 func (s *OpAMPProxy) onMessage(_ context.Context, conn types.Connection, msg *protobufs.AgentToServer) *protobufs.ServerToAgent {
@@ -146,10 +146,17 @@ func (s *OpAMPProxy) onMessage(_ context.Context, conn types.Connection, msg *pr
 	}
 	s.mux.Unlock()
 	if agentUpdated {
-		s.updatesChan <- struct{}{}
+		s.signalUpdate()
 	}
 	// Send the response back to the Agent.
 	return response
+}
+
+func (s *OpAMPProxy) signalUpdate() {
+	select {
+	case s.updatesChan <- struct{}{}:
+	default:
+	}
 }
 
 // GetConfigurations implements Server.

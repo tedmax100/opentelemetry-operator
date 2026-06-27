@@ -5,6 +5,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -249,6 +250,17 @@ func (*mockOpampClient) SetPackageStatuses(*protobufs.PackageStatuses) error {
 	return nil
 }
 
+func (*mockOpampClient) SetAvailableComponents(*protobufs.AvailableComponents) error {
+	return nil
+}
+
+func (*mockOpampClient) SetFlags(protobufs.AgentToServerFlags) {
+}
+
+func (*mockOpampClient) SetCapabilities(*protobufs.AgentCapabilities) error {
+	return nil
+}
+
 func getFakeApplier(t *testing.T, conf *config.Config, lists ...runtimeClient.ObjectList) *operator.Client {
 	schemeBuilder := runtime.NewSchemeBuilder(func(s *runtime.Scheme) error {
 		s.AddKnownTypes(v1alpha1.GroupVersion, &v1alpha1.OpenTelemetryCollector{}, &v1alpha1.OpenTelemetryCollectorList{})
@@ -262,6 +274,166 @@ func getFakeApplier(t *testing.T, conf *config.Config, lists ...runtimeClient.Ob
 	require.NoError(t, err, "Should be able to add custom types")
 	c := fake.NewClientBuilder().WithLists(lists...).WithScheme(scheme)
 	return operator.NewClient("test-bridge", l, c.Build(), conf.GetComponentsAllowed())
+}
+
+type mockHealthApplier struct {
+	health operator.Health
+	err    error
+}
+
+func (*mockHealthApplier) Apply(string, *protobufs.AgentConfigFile) error {
+	return nil
+}
+
+func (*mockHealthApplier) Delete(string) error {
+	return nil
+}
+
+func (*mockHealthApplier) ListInstances() ([]operator.CollectorInstance, error) {
+	return nil, nil
+}
+
+func (m *mockHealthApplier) GetHealth() (operator.Health, error) {
+	return m.health, m.err
+}
+
+type recordingConfigApplier struct {
+	applied map[string][]byte
+}
+
+func (r *recordingConfigApplier) Apply(name string, configFile *protobufs.AgentConfigFile) error {
+	if r.applied == nil {
+		r.applied = map[string][]byte{}
+	}
+	r.applied[name] = configFile.Body
+	return nil
+}
+
+func (*recordingConfigApplier) Delete(string) error {
+	return nil
+}
+
+func (*recordingConfigApplier) ListInstances() ([]operator.CollectorInstance, error) {
+	return nil, nil
+}
+
+func (*recordingConfigApplier) GetHealth() (operator.Health, error) {
+	return operator.Health{Healthy: true, Children: map[string]operator.Health{}}, nil
+}
+
+func TestAgent_UpdateHealth(t *testing.T) {
+	mockClient := &mockOpampClient{}
+	conf := config.NewConfig(logr.Discard())
+	applier := getFakeApplier(t, conf)
+	agent := NewAgent(logr.Discard(), applier, conf, mockClient, newMockProxy(nil, nil, nil))
+
+	require.NoError(t, agent.UpdateHealth())
+	assert.NotNil(t, mockClient.lastHealth)
+	assert.True(t, mockClient.lastHealth.Healthy)
+}
+
+func TestAgentApplyRemoteConfigRejectsEmptyRemoteName(t *testing.T) {
+	applier := &recordingConfigApplier{}
+	agent := NewAgent(logr.Discard(), applier, config.NewConfig(logr.Discard()), &mockOpampClient{}, newMockProxy(nil, nil, nil))
+	body := []byte("receivers: {}\n")
+
+	status, err := agent.applyRemoteConfig(&protobufs.AgentRemoteConfig{
+		Config: &protobufs.AgentConfigMap{
+			ConfigMap: map[string]*protobufs.AgentConfigFile{
+				"": {
+					Body: body,
+				},
+			},
+		},
+		ConfigHash: []byte("hash"),
+	})
+
+	require.Error(t, err)
+	require.Equal(t, protobufs.RemoteConfigStatuses_RemoteConfigStatuses_FAILED, status.Status)
+	assert.Contains(t, status.ErrorMessage, "remote config entry has empty name")
+	assert.Empty(t, applier.applied)
+}
+
+func TestAgentApplyRemoteConfigRejectsEmptyBody(t *testing.T) {
+	applier := &recordingConfigApplier{}
+	agent := NewAgent(logr.Discard(), applier, config.NewConfig(logr.Discard()), &mockOpampClient{}, newMockProxy(nil, nil, nil))
+
+	status, err := agent.applyRemoteConfig(&protobufs.AgentRemoteConfig{
+		Config: &protobufs.AgentConfigMap{
+			ConfigMap: map[string]*protobufs.AgentConfigFile{
+				"collector": {},
+			},
+		},
+		ConfigHash: []byte("hash"),
+	})
+
+	require.Error(t, err)
+	require.Equal(t, protobufs.RemoteConfigStatuses_RemoteConfigStatuses_FAILED, status.Status)
+	assert.Contains(t, status.ErrorMessage, `remote config entry "collector" has empty body`)
+	assert.Empty(t, applier.applied)
+}
+
+func TestAgent_getHealthFromApplierHealth(t *testing.T) {
+	fakeClock := testingclock.NewFakeClock(time.Now())
+	startTime, err := timeToUnixNanoUnsigned(fakeClock.Now())
+	require.NoError(t, err)
+	childStart := fakeClock.Now().Add(time.Second)
+	childStartUnix, err := timeToUnixNanoUnsigned(childStart)
+	require.NoError(t, err)
+	applier := &mockHealthApplier{
+		health: operator.Health{
+			Healthy: true,
+			Status:  "root",
+			Children: map[string]operator.Health{
+				"child": {
+					Healthy:   false,
+					Status:    "child-status",
+					LastError: "child-error",
+					StartTime: childStart,
+					Children:  map[string]operator.Health{},
+				},
+			},
+		},
+	}
+	agent := NewAgent(logr.Discard(), applier, config.NewConfig(logr.Discard()), &mockOpampClient{}, newMockProxy(nil, nil, nil))
+	agent.clock = fakeClock
+	agent.startTime = startTime
+
+	got := agent.getHealth()
+
+	assert.Equal(t, &protobufs.ComponentHealth{
+		Healthy:            true,
+		StartTimeUnixNano:  startTime,
+		StatusTimeUnixNano: startTime,
+		Status:             "root",
+		ComponentHealthMap: map[string]*protobufs.ComponentHealth{
+			"child": {
+				Healthy:            false,
+				StartTimeUnixNano:  childStartUnix,
+				StatusTimeUnixNano: startTime,
+				Status:             "child-status",
+				LastError:          "child-error",
+				ComponentHealthMap: map[string]*protobufs.ComponentHealth{},
+			},
+		},
+	}, got)
+}
+
+func TestAgent_getHealthFromApplierError(t *testing.T) {
+	fakeClock := testingclock.NewFakeClock(time.Now())
+	startTime, err := timeToUnixNanoUnsigned(fakeClock.Now())
+	require.NoError(t, err)
+	agent := NewAgent(logr.Discard(), &mockHealthApplier{err: errors.New("health failed")}, config.NewConfig(logr.Discard()), &mockOpampClient{}, newMockProxy(nil, nil, nil))
+	agent.clock = fakeClock
+	agent.startTime = startTime
+
+	got := agent.getHealth()
+
+	assert.Equal(t, &protobufs.ComponentHealth{
+		Healthy:           false,
+		StartTimeUnixNano: startTime,
+		LastError:         "health failed",
+	}, got)
 }
 
 func TestAgent_getHealth(t *testing.T) {
@@ -567,6 +739,55 @@ func TestAgent_getHealth(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAgent_getEffectiveConfig(t *testing.T) {
+	t.Run("skip terminating", func(t *testing.T) {
+		mockClient := &mockOpampClient{}
+		conf := config.NewConfig(logr.Discard())
+		loadErr := config.LoadFromFile(conf, agentTestFileName)
+		require.NoError(t, loadErr, "should be able to load config")
+
+		now := metav1.Now()
+		aliveCollector := v1beta1.OpenTelemetryCollector{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      testCollectorName,
+				Namespace: testNamespace,
+				Labels: map[string]string{
+					operator.ManagedLabelKey: "true",
+				},
+			},
+		}
+		terminatingCollector := v1beta1.OpenTelemetryCollector{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      otherCollectorName,
+				Namespace: testNamespace,
+				Labels: map[string]string{
+					operator.ManagedLabelKey: "true",
+				},
+				// Required at least one finalizer when DeletionTimestamp is set
+				Finalizers:        []string{"opentelemetrycollector.opentelemetry.io/finalizer-test"},
+				DeletionTimestamp: &now,
+			},
+		}
+		collectorList := &v1beta1.OpenTelemetryCollectorList{
+			Items: []v1beta1.OpenTelemetryCollector{aliveCollector, terminatingCollector},
+		}
+
+		applier := getFakeApplier(t, conf, collectorList)
+		mp := newMockProxy(nil, nil, nil)
+		agent := NewAgent(l, applier, conf, mockClient, mp)
+		err := agent.Start()
+		defer agent.Shutdown()
+		require.NoError(t, err, "should be able to start agent")
+
+		effectiveConfig, err := agent.getEffectiveConfig(t.Context())
+		require.NoError(t, err, "should be able to get effective config")
+
+		cfgMap := effectiveConfig.GetConfigMap().GetConfigMap()
+		assert.Contains(t, cfgMap, testCollectorKey, "alive collector must be reported as effective")
+		assert.NotContains(t, cfgMap, otherCollectorKey, "terminating collector must not be reported as effective")
+	})
 }
 
 func TestAgent_onMessage(t *testing.T) {
@@ -1197,4 +1418,68 @@ func getMessageDataFromConfigFile(filemap map[string]string) (*types.MessageData
 		ConfigHash: []byte(hash),
 	}
 	return toReturn, nil
+}
+
+func TestAgent_Start_TLSConfig(t *testing.T) {
+	tests := []struct {
+		name               string
+		endpoint           string
+		insecure           bool
+		insecureSkipVerify bool
+		expectNil          bool
+		expectSkip         bool
+		expectURL          string
+	}{
+		{
+			name:      "Insecure (no TLS)",
+			endpoint:  "ws://127.0.0.1:4320/v1/opamp",
+			insecure:  true,
+			expectNil: true,
+			expectURL: "ws://127.0.0.1:4320/v1/opamp",
+		},
+		{
+			name:               "Secure with Skip Verify",
+			endpoint:           "wss://127.0.0.1:4320/v1/opamp",
+			insecure:           false,
+			insecureSkipVerify: true,
+			expectNil:          false,
+			expectSkip:         true,
+			expectURL:          "wss://127.0.0.1:4320/v1/opamp",
+		},
+		{
+			name:               "Secure (verify enabled)",
+			endpoint:           "wss://127.0.0.1:4320/v1/opamp",
+			insecure:           false,
+			insecureSkipVerify: false,
+			expectNil:          true,
+			expectURL:          "wss://127.0.0.1:4320/v1/opamp",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &mockOpampClient{}
+			conf := config.NewConfig(logr.Discard())
+			conf.Endpoint = tt.endpoint
+			conf.TLS = &v1alpha1.OpAMPBridgeTLSConfig{
+				Insecure:           tt.insecure,
+				InsecureSkipVerify: tt.insecureSkipVerify,
+			}
+			applier := getFakeApplier(t, conf)
+			mp := newMockProxy(nil, nil, nil)
+			agent := NewAgent(l, applier, conf, mockClient, mp)
+
+			err := agent.Start()
+			require.NoError(t, err)
+
+			if tt.expectNil {
+				assert.Nil(t, mockClient.settings.TLSConfig)
+			} else {
+				require.NotNil(t, mockClient.settings.TLSConfig)
+				assert.Equal(t, tt.expectSkip, mockClient.settings.TLSConfig.InsecureSkipVerify)
+			}
+			assert.Equal(t, tt.expectURL, mockClient.settings.OpAMPServerURL)
+			agent.Shutdown()
+		})
+	}
 }

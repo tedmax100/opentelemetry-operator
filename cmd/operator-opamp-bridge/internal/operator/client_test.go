@@ -46,6 +46,19 @@ func getFakeClient(t *testing.T, lists ...client.ObjectList) client.WithWatch {
 }
 
 func TestClient_Apply(t *testing.T) {
+	componentsAllowed := map[string]map[string]bool{
+		"receivers": {
+			"otlp": true,
+		},
+		"processors": {
+			"memory_limiter": true,
+			"batch":          true,
+		},
+		"exporters": {
+			"debug": true,
+		},
+	}
+
 	type args struct {
 		name      string
 		namespace string
@@ -64,6 +77,15 @@ func TestClient_Apply(t *testing.T) {
 				name:      "test",
 				namespace: "opentelemetry",
 				file:      "testdata/collector.yaml",
+			},
+			wantErr: false,
+		},
+		{
+			name: "no processors case",
+			args: args{
+				name:      "test",
+				namespace: "opentelemetry",
+				file:      "testdata/no-processors-collector.yaml",
 			},
 			wantErr: false,
 		},
@@ -121,7 +143,7 @@ func TestClient_Apply(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeClient := getFakeClient(t)
-			c := NewClient(bridgeName, clientLogger, fakeClient, nil)
+			c := NewClient(bridgeName, clientLogger, fakeClient, componentsAllowed)
 			var colConfig []byte
 			var err error
 			if tt.args.file != "" {
@@ -134,7 +156,7 @@ func TestClient_Apply(t *testing.T) {
 				Body:        colConfig,
 				ContentType: "yaml",
 			}
-			applyErr := c.Apply(tt.args.name, tt.args.namespace, configmap)
+			applyErr := c.Apply(NewKubeResourceKey(tt.args.namespace, tt.args.name).String(), configmap)
 			if tt.wantErr {
 				assert.Error(t, applyErr)
 				assert.ErrorContains(t, applyErr, tt.errContains)
@@ -177,7 +199,7 @@ func TestClient_ApplyUpdate(t *testing.T) {
 		ContentType: "yaml",
 	}
 	// Apply a valid initial configuration
-	err = c.Apply(name, namespace, configmap)
+	err = c.Apply(NewKubeResourceKey(namespace, name).String(), configmap)
 	require.NoError(t, err, "Should apply base config")
 
 	// Confirm there are now two collector instances, reporting and managed
@@ -198,7 +220,7 @@ func TestClient_ApplyUpdate(t *testing.T) {
 
 	// Try updating with an invalid configuration
 	configmap.Body = []byte("empty, invalid!")
-	err = c.Apply(name, namespace, configmap)
+	err = c.Apply(NewKubeResourceKey(namespace, name).String(), configmap)
 	assert.Error(t, err, "Should be unable to update with invalid config")
 
 	// Update successfully with a valid configuration
@@ -208,7 +230,7 @@ func TestClient_ApplyUpdate(t *testing.T) {
 		Body:        newColConfig,
 		ContentType: "yaml",
 	}
-	err = c.Apply(name, namespace, newConfigMap)
+	err = c.Apply(NewKubeResourceKey(namespace, name).String(), newConfigMap)
 	require.NoError(t, err, "Should be able to update collector")
 
 	// Get the updated collector
@@ -224,8 +246,12 @@ func TestClient_ApplyUpdate(t *testing.T) {
 	allInstances, err = c.ListInstances()
 	require.NoError(t, err, "Should be able to list all collectors")
 	assert.Len(t, allInstances, 2)
-	assert.Contains(t, allInstances, reportingCol)
-	assert.Contains(t, allInstances, *updatedInstance)
+	instanceNames := make([]string, len(allInstances))
+	for i, inst := range allInstances {
+		instanceNames[i] = inst.GetNamespace() + "/" + inst.GetName()
+	}
+	assert.Contains(t, instanceNames, reportingCol.GetNamespace()+"/"+reportingCol.GetName())
+	assert.Contains(t, instanceNames, updatedInstance.GetNamespace()+"/"+updatedInstance.GetName())
 }
 
 func TestClient_Delete(t *testing.T) {
@@ -240,7 +266,7 @@ func TestClient_Delete(t *testing.T) {
 		ContentType: "yaml",
 	}
 	// Apply a valid initial configuration
-	err = c.Apply(name, namespace, configmap)
+	err = c.Apply(NewKubeResourceKey(namespace, name).String(), configmap)
 	require.NoError(t, err, "Should apply base config")
 
 	// Get the newly created collector
@@ -252,7 +278,7 @@ func TestClient_Delete(t *testing.T) {
 	require.Len(t, instance.Spec.Config.Service.Pipelines, 1, "Should have a pipeline")
 
 	// Delete it
-	err = c.Delete(name, namespace)
+	err = c.Delete(NewKubeResourceKey(namespace, name).String())
 	require.NoError(t, err, "Should be able to delete a collector")
 
 	// Check there's nothing left
@@ -269,7 +295,7 @@ func loadConfig(file string) ([]byte, error) {
 	return yamlFile, nil
 }
 
-func TestClient_GetCollectorPods(t *testing.T) {
+func TestClient_getCollectorPods(t *testing.T) {
 	mockPodList := &v1.PodList{
 		Items: []v1.Pod{
 			{
@@ -337,11 +363,11 @@ func TestClient_GetCollectorPods(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fakeClient := getFakeClient(t, mockPodList)
 			c := NewClient(bridgeName, clientLogger, fakeClient, nil)
-			got, err := c.GetCollectorPods(tt.args.selector, tt.args.namespace)
-			if !tt.wantErr(t, err, fmt.Sprintf("GetCollectorPods(%v)", tt.args.selector)) {
+			got, err := c.getCollectorPods(tt.args.selector, tt.args.namespace)
+			if !tt.wantErr(t, err, fmt.Sprintf("getCollectorPods(%v)", tt.args.selector)) {
 				return
 			}
-			assert.Equalf(t, tt.want, got, "GetCollectorPods(%v)", tt.args.selector)
+			assert.Equalf(t, tt.want, got, "getCollectorPods(%v)", tt.args.selector)
 		})
 	}
 }

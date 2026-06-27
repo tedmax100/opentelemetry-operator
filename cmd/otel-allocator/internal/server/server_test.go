@@ -42,8 +42,7 @@ var (
 
 func TestServer_LivenessProbeHandler(t *testing.T) {
 	leastWeighted, _ := allocation.New("least-weighted", logger)
-	listenAddr := ":8080"
-	s, err := NewServer(logger, leastWeighted, listenAddr)
+	s, err := NewServer(logger, leastWeighted, "")
 	require.NoError(t, err)
 	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/livez", http.NoBody)
 	w := httptest.NewRecorder()
@@ -149,8 +148,7 @@ func TestServer_TargetsHandler(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			listenAddr := ":8080"
-			s, err := NewServer(logger, tt.args.allocator, listenAddr)
+			s, err := NewServer(logger, tt.args.allocator, "")
 			require.NoError(t, err)
 
 			tt.args.allocator.SetCollectors(map[string]*allocation.Collector{"test-collector": {Name: "test-collector"}})
@@ -487,11 +485,34 @@ func TestServer_ScrapeConfigsHandler(t *testing.T) {
 			},
 			expectedCode: http.StatusOK,
 		},
+		{
+			description: "http with allow-insecure-auth-secrets serves real secret values",
+			scrapeConfigs: map[string]*promconfig.ScrapeConfig{
+				"serviceMonitor/testapp/testapp3/0": {
+					JobName:         "serviceMonitor/testapp/testapp3/0",
+					HonorTimestamps: true,
+					ScrapeInterval:  model.Duration(30 * time.Second),
+					ScrapeTimeout:   model.Duration(30 * time.Second),
+					MetricsPath:     "/metrics",
+					Scheme:          "http",
+					HTTPClientConfig: config.HTTPClientConfig{
+						FollowRedirects: true,
+						BasicAuth: &config.BasicAuth{
+							Username: "test",
+							Password: "P@$$w0rd1!?",
+						},
+					},
+				},
+			},
+			expectedCode: http.StatusOK,
+			serverOptions: []Option{
+				WithInsecureAuthSecrets(),
+			},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			listenAddr := ":8080"
-			s, err := NewServer(logger, nil, listenAddr, tc.serverOptions...)
+			s, err := NewServer(logger, nil, "", tc.serverOptions...)
 			require.NoError(t, err)
 			assert.NoError(t, s.UpdateScrapeConfigResponse(tc.scrapeConfigs))
 
@@ -517,14 +538,15 @@ func TestServer_ScrapeConfigsHandler(t *testing.T) {
 			err = yaml.Unmarshal(bodyBytes, scrapeConfigs)
 			require.NoError(t, err)
 
+			serveSecrets := s.httpsServer != nil || s.allowInsecureAuthSecrets
 			for _, c := range scrapeConfigs {
-				if s.httpsServer == nil && c.HTTPClientConfig.BasicAuth != nil {
+				if !serveSecrets && c.HTTPClientConfig.BasicAuth != nil {
 					assert.Equal(t, c.HTTPClientConfig.BasicAuth.Password, config.Secret("<secret>"))
 				}
 			}
 
 			for _, c := range tc.scrapeConfigs {
-				if s.httpsServer == nil && c.HTTPClientConfig.BasicAuth != nil {
+				if !serveSecrets && c.HTTPClientConfig.BasicAuth != nil {
 					c.HTTPClientConfig.BasicAuth.Password = "<secret>"
 				}
 			}
@@ -582,9 +604,8 @@ func TestServer_JobHandler(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			listenAddr := ":8080"
 			a := &mockAllocator{targetItems: tc.targetItems}
-			s, err := NewServer(logger, a, listenAddr)
+			s, err := NewServer(logger, a, "")
 			require.NoError(t, err)
 			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/jobs", http.NoBody)
 			w := httptest.NewRecorder()
@@ -645,9 +666,8 @@ func TestServer_JobsHandler_HTML(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			listenAddr := ":8080"
 			a := &mockAllocator{targetItems: tc.targetItems}
-			s, err := NewServer(logger, a, listenAddr)
+			s, err := NewServer(logger, a, "")
 			require.NoError(t, err)
 			a.SetCollectors(map[string]*allocation.Collector{
 				"test-collector":  {Name: "test-collector"},
@@ -716,8 +736,7 @@ func TestServer_JobHandler_HTML(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			listenAddr := ":8080"
-			s, err := NewServer(logger, tt.args.allocator, listenAddr)
+			s, err := NewServer(logger, tt.args.allocator, "")
 			require.NoError(t, err)
 			tt.args.allocator.SetCollectors(map[string]*allocation.Collector{
 				"test-collector":  {Name: "test-collector"},
@@ -775,8 +794,7 @@ func TestServer_IndexHandler(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			listenAddr := ":8080"
-			s, err := NewServer(logger, tc.allocator, listenAddr)
+			s, err := NewServer(logger, tc.allocator, "")
 			require.NoError(t, err)
 			tc.allocator.SetCollectors(map[string]*allocation.Collector{
 				"test-collector1": {Name: "test-collector1"},
@@ -834,8 +852,7 @@ func TestServer_TargetsHTMLHandler(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			listenAddr := ":8080"
-			s, err := NewServer(logger, tc.allocator, listenAddr)
+			s, err := NewServer(logger, tc.allocator, "")
 			require.NoError(t, err)
 			tc.allocator.SetCollectors(map[string]*allocation.Collector{
 				"test-collector1": {Name: "test-collector1"},
@@ -922,8 +939,7 @@ func TestServer_CollectorHandler(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			listenAddr := ":8080"
-			s, err := NewServer(logger, tc.allocator, listenAddr)
+			s, err := NewServer(logger, tc.allocator, "")
 			require.NoError(t, err)
 			tc.allocator.SetCollectors(map[string]*allocation.Collector{
 				"test-collector":  {Name: "test-collector"},
@@ -989,8 +1005,7 @@ func TestServer_TargetHTMLHandler(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			listenAddr := ":8080"
-			s, err := NewServer(logger, tc.allocator, listenAddr)
+			s, err := NewServer(logger, tc.allocator, "")
 			require.NoError(t, err)
 			tc.allocator.SetCollectors(map[string]*allocation.Collector{
 				"test-collector":  {Name: "test-collector"},
@@ -1061,8 +1076,7 @@ func TestServer_Readiness(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			listenAddr := ":8080"
-			s, err := NewServer(logger, nil, listenAddr)
+			s, err := NewServer(logger, nil, "")
 			require.NoError(t, err)
 			if tc.scrapeConfigs != nil {
 				assert.NoError(t, s.UpdateScrapeConfigResponse(tc.scrapeConfigs))
@@ -1103,8 +1117,7 @@ func TestServer_ScrapeConfigResponse(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.description, func(t *testing.T) {
-			listenAddr := ":8080"
-			s, err := NewServer(logger, nil, listenAddr)
+			s, err := NewServer(logger, nil, "")
 			require.NoError(t, err)
 
 			allocCfg := allocatorconfig.CreateDefaultConfig()
@@ -1139,4 +1152,218 @@ func TestServer_ScrapeConfigResponse(t *testing.T) {
 
 func newLink(jobName string) linkJSON {
 	return linkJSON{Link: fmt.Sprintf("/jobs/%s/targets", url.QueryEscape(jobName))}
+}
+
+func TestServer_TargetsHandlerNoCollectorID(t *testing.T) {
+	leastWeighted, _ := allocation.New("least-weighted", logger)
+	s, err := NewServer(logger, leastWeighted, "")
+	require.NoError(t, err)
+
+	leastWeighted.SetCollectors(map[string]*allocation.Collector{
+		"test-collector": {Name: "test-collector"},
+	})
+	leastWeighted.SetTargets([]*target.Item{baseTargetItem})
+
+	// Without collector_id, should return by-collector map
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/jobs/test-job/targets", http.NoBody)
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, request)
+	result := w.Result()
+
+	assert.Equal(t, http.StatusOK, result.StatusCode)
+	bodyBytes, err := io.ReadAll(result.Body)
+	require.NoError(t, err)
+
+	var resp map[string]collectorJSON
+	err = json.Unmarshal(bodyBytes, &resp)
+	assert.NoError(t, err)
+}
+
+func TestServer_TargetsHandlerURLEncodedJob(t *testing.T) {
+	leastWeighted, _ := allocation.New("least-weighted", logger)
+	jobName := "serviceMonitor/ns/app/0"
+	encodedJob := url.QueryEscape(jobName)
+	targetWithSlash := target.NewItem(jobName, "test-url", baseLabelSet, "test-collector")
+
+	s, err := NewServer(logger, leastWeighted, "")
+	require.NoError(t, err)
+
+	leastWeighted.SetCollectors(map[string]*allocation.Collector{"test-collector": {Name: "test-collector"}})
+	leastWeighted.SetTargets([]*target.Item{targetWithSlash})
+
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+		fmt.Sprintf("/jobs/%s/targets?collector_id=test-collector", encodedJob), http.NoBody)
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, request)
+	result := w.Result()
+
+	assert.Equal(t, http.StatusOK, result.StatusCode)
+	bodyBytes, err := io.ReadAll(result.Body)
+	require.NoError(t, err)
+
+	var items []*targetJSON
+	err = json.Unmarshal(bodyBytes, &items)
+	assert.NoError(t, err)
+	assert.Len(t, items, 1)
+}
+
+func TestServer_ReadinessNotReady(t *testing.T) {
+	s, err := NewServer(logger, nil, "")
+	require.NoError(t, err)
+
+	// Don't set any scrape config - server should be not ready
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", http.NoBody)
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, request)
+	result := w.Result()
+
+	assert.Equal(t, http.StatusServiceUnavailable, result.StatusCode)
+}
+
+func TestServer_TargetHTMLHandlerNotFound(t *testing.T) {
+	allocator, _ := allocation.New("consistent-hashing", logger)
+	s, err := NewServer(logger, allocator, "")
+	require.NoError(t, err)
+
+	allocator.SetCollectors(map[string]*allocation.Collector{
+		"test-collector": {Name: "test-collector"},
+	})
+	allocator.SetTargets([]*target.Item{baseTargetItem})
+
+	// Request a target hash that doesn't exist
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/target", http.NoBody)
+	request.URL.RawQuery = "target_hash=999999999"
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, request)
+	result := w.Result()
+
+	assert.Equal(t, http.StatusNotFound, result.StatusCode)
+}
+
+func TestServer_TargetHTMLHandlerInvalidHash(t *testing.T) {
+	allocator, _ := allocation.New("consistent-hashing", logger)
+	s, err := NewServer(logger, allocator, "")
+	require.NoError(t, err)
+
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/target", http.NoBody)
+	request.URL.RawQuery = "target_hash=not-a-number"
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, request)
+	result := w.Result()
+
+	assert.Equal(t, http.StatusBadRequest, result.StatusCode)
+}
+
+func TestServer_TargetHTMLHandlerMissingHash(t *testing.T) {
+	allocator, _ := allocation.New("consistent-hashing", logger)
+	s, err := NewServer(logger, allocator, "")
+	require.NoError(t, err)
+
+	// No target_hash query param at all
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/target", http.NoBody)
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, request)
+	result := w.Result()
+
+	assert.Equal(t, http.StatusBadRequest, result.StatusCode)
+}
+
+func TestServer_CollectorHandlerNotFound(t *testing.T) {
+	allocator, _ := allocation.New("consistent-hashing", logger)
+	s, err := NewServer(logger, allocator, "")
+	require.NoError(t, err)
+
+	allocator.SetCollectors(map[string]*allocation.Collector{
+		"test-collector": {Name: "test-collector"},
+	})
+
+	// Request a collector that doesn't exist
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/collector", http.NoBody)
+	request.URL.RawQuery = "collector_id=nonexistent"
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, request)
+	result := w.Result()
+
+	assert.Equal(t, http.StatusNotFound, result.StatusCode)
+}
+
+func TestServer_CollectorHandlerMissingID(t *testing.T) {
+	allocator, _ := allocation.New("consistent-hashing", logger)
+	s, err := NewServer(logger, allocator, "")
+	require.NoError(t, err)
+
+	// No collector_id query param
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/collector", http.NoBody)
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, request)
+	result := w.Result()
+
+	assert.Equal(t, http.StatusBadRequest, result.StatusCode)
+}
+
+func TestServer_JobHTMLHandlerMissingJobID(t *testing.T) {
+	allocator, _ := allocation.New("consistent-hashing", logger)
+	s, err := NewServer(logger, allocator, "")
+	require.NoError(t, err)
+
+	// No job_id query param
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/debug/job", http.NoBody)
+	request.Header.Set("Accept", "text/html")
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, request)
+	result := w.Result()
+
+	assert.Equal(t, http.StatusBadRequest, result.StatusCode)
+}
+
+func TestServer_MetricsEndpoint(t *testing.T) {
+	allocator, _ := allocation.New("consistent-hashing", logger)
+	s, err := NewServer(logger, allocator, "")
+	require.NoError(t, err)
+
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", http.NoBody)
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, request)
+	result := w.Result()
+
+	assert.Equal(t, http.StatusOK, result.StatusCode)
+	bodyBytes, err := io.ReadAll(result.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(bodyBytes), "go_goroutines")
+}
+
+func TestServer_EmptyTargetReturnsEmptyList(t *testing.T) {
+	leastWeighted, _ := allocation.New("least-weighted", logger)
+	s, err := NewServer(logger, leastWeighted, "")
+	require.NoError(t, err)
+
+	leastWeighted.SetCollectors(map[string]*allocation.Collector{
+		"test-collector": {Name: "test-collector"},
+	})
+
+	// Request targets for a job that has no targets
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/jobs/nonexistent/targets?collector_id=test-collector", http.NoBody)
+	w := httptest.NewRecorder()
+
+	s.server.Handler.ServeHTTP(w, request)
+	result := w.Result()
+
+	assert.Equal(t, http.StatusOK, result.StatusCode)
+	bodyBytes, err := io.ReadAll(result.Body)
+	require.NoError(t, err)
+
+	var items []*targetJSON
+	err = json.Unmarshal(bodyBytes, &items)
+	require.NoError(t, err)
+	assert.Empty(t, items)
 }
