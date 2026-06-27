@@ -1,0 +1,61 @@
+# Stage 2：agent collector —— 由 Operator 管理，這就是你說的「otel span load balancer」。
+#
+# 角色：每個 node 一份（daemonset），接收同節點上各 app sidecar / SDK 送來的 OTLP，
+# 然後用 loadbalancing exporter 以 trace ID 當 routing key，把同一條 trace 的所有 span
+# 固定送到「同一個」gateway 副本，讓 gateway 的 tail_sampling 能看到完整的 trace。
+#
+# Operator 會自動建立：
+#   - DaemonSet agent-collector
+#   - Service   agent-collector  (ClusterIP，4317/4318)
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: agent
+  namespace: otel-lab
+  labels:
+    # 讓 Stage 5 的 OpAMP Bridge 把這個 collector 納入管理 / 回報 effective config
+    opentelemetry.io/opamp-managed: "true"
+spec:
+  mode: daemonset
+  image: otel/opentelemetry-collector-contrib:0.153.0
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    exporters:
+      # ★ 核心：span load balancer
+      load_balancing:
+        routing_key: traceID          # 同一條 trace 的 span 永遠走到同一個 backend
+        protocol:
+          otlp:
+            tls:
+              insecure: true
+        resolver:
+          # 用 DNS 解析 gateway 的 headless service，會拿到「每個副本」的 IP。
+          # gateway 副本增減時，這裡會自動跟著更新 backend 清單。
+          dns:
+            hostname: gateway-collector-headless.otel-lab.svc.cluster.local
+            port: "4317"   # 必須是字串，給 int 會 unmarshal 失敗
+
+      # metrics / logs 不需要 trace 親和性，直接送 gateway 的 ClusterIP service 即可。
+      otlp/gateway:
+        endpoint: gateway-collector.otel-lab.svc.cluster.local:4317
+        tls:
+          insecure: true
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          exporters: [load_balancing]
+        metrics:
+          receivers: [otlp]
+          exporters: [otlp/gateway]
+        logs:
+          receivers: [otlp]
+          exporters: [otlp/gateway]

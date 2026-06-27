@@ -1,0 +1,51 @@
+# Stage 4：payment-service 改用 Operator 管理的版本。
+#
+# 對照 03-payment-service.yaml，這版做了三件事：
+#   1. 移除手動掛的 otel-collector-sidecar container（改由 Operator 注入 sidecar）
+#   2. 關掉 app 內的手動 SDK（MANUAL_OTEL 不再設為 true），改由 inject-python 自動 instrument
+#   3. 加上 sidecar.opentelemetry.io/inject 與 instrumentation.opentelemetry.io/inject-python annotation
+#
+# 真實遷移時，第 2 步會直接從 app code 刪掉手動 SDK 並移除 requirements 裡的 opentelemetry-*，
+# 這裡用 MANUAL_OTEL flag 對照，效果一樣：app 不再自己初始化 OTel。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  namespace: otel-lab
+  labels:
+    app: payment-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+      annotations:
+        sidecar.opentelemetry.io/inject: "app-sidecar"
+        instrumentation.opentelemetry.io/inject-python: "lab-instrumentation"
+        instrumentation.opentelemetry.io/container-names: "payment-service"
+    spec:
+      containers:
+        # 只剩 app 一個 container，sidecar collector 由 Operator 注入。
+        - name: payment-service
+          image: payment-service:lab
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5000
+          env:
+            # MANUAL_OTEL 預設 false → app 不再自己初始化 OTel SDK。
+            # OTEL_SERVICE_NAME / OTEL_EXPORTER_OTLP_ENDPOINT 等改由 Operator 從
+            # Instrumentation CR + Pod 資訊自動推導注入。
+            - name: ORDER_SERVICE_URL
+              value: http://order-service:8080
+            - name: DB_DSN
+              value: host=postgres port=5432 dbname=labdb user=lab password=labpass
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 5

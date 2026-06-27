@@ -1,0 +1,104 @@
+# Stage 5：OpAMP 控制面。
+#
+# 兩個角色：
+#   - opamp-server   ：我們自己寫的最小 Go OpAMP server（控制面）。
+#   - OpAMPBridge CR ：Operator 會幫它跑一個 cmd/operator-opamp-bridge（in-cluster Go agent），
+#                      它把「Operator 管理的每個 OpenTelemetryCollector」當成 agent 回報給 server，
+#                      並可接收 server 下推的 remote config。
+#
+# 連線方向：OpAMPBridge ──(ws)──▶ opamp-server:/v1/opamp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opamp-server
+  namespace: otel-lab
+  labels:
+    app: opamp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opamp-server
+  template:
+    metadata:
+      labels:
+        app: opamp-server
+    spec:
+      containers:
+        - name: opamp-server
+          image: opamp-server:lab          # Stage 5 build + import 進 k3d
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4320
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opamp-server
+  namespace: otel-lab
+spec:
+  selector:
+    app: opamp-server
+  ports:
+    - port: 4320
+      targetPort: 4320
+---
+# Operator 會幫 OpAMPBridge 建好 ServiceAccount（名稱 = <bridge>-opamp-bridge），
+# 但「讀取 OpenTelemetryCollector CR」的權限要自己授予，否則 bridge 會報
+#   opentelemetrycollectors.opentelemetry.io is forbidden ... at the cluster scope
+# 而無法回報 effective config。bridge 跨 namespace 列出 collector，所以需要 ClusterRole。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lab-bridge-opamp-bridge
+rules:
+  - apiGroups: ["opentelemetry.io"]
+    resources: ["opentelemetrycollectors"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lab-bridge-opamp-bridge
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lab-bridge-opamp-bridge
+subjects:
+  - kind: ServiceAccount
+    name: lab-bridge-opamp-bridge
+    namespace: otel-lab
+---
+apiVersion: opentelemetry.io/v1alpha1
+kind: OpAMPBridge
+metadata:
+  name: lab-bridge
+  namespace: otel-lab
+spec:
+  # 連到我們的 OpAMP server。注意是 ws://（WebSocket）。
+  endpoint: ws://opamp-server.otel-lab.svc.cluster.local:4320/v1/opamp
+  capabilities:
+    AcceptsRemoteConfig: true
+    ReportsEffectiveConfig: true
+    ReportsHealth: true
+    ReportsOwnMetrics: true
+    ReportsOwnTraces: true
+    ReportsOwnLogs: true
+    ReportsRemoteConfig: true
+    ReportsStatus: true
+    AcceptsOpAMPConnectionSettings: true
+    AcceptsOtherConnectionSettings: true
+    AcceptsRestartCommand: true
+  # 限制 bridge 下推設定時允許出現的 component（白名單，安全防線）
+  componentsAllowed:
+    receivers:
+      - otlp
+    processors:
+      - batch
+      - memory_limiter
+      - tail_sampling
+    exporters:
+      - debug
+      - otlp
+      - load_balancing

@@ -1,0 +1,58 @@
+# Stage 3：order-service 的「已注入」版本。
+#
+# 跟 02-order-service.yaml 唯一的差別就是 Pod template 上多了三個 annotation。
+# image、env、容器設定全都沒變 —— 這就是 auto-instrumentation 的核心價值：零改 code。
+#
+# Operator 的 podmutation webhook 看到這些 annotation 後，會在 Pod 建立時：
+#   1. 注入一個 sidecar collector container（來自 app-sidecar CR）
+#   2. 注入一個 initContainer，把 opentelemetry-javaagent.jar 複製進共享 volume
+#   3. 在 app container 加上 JAVA_TOOL_OPTIONS=-javaagent:... 與一堆 OTEL_* env
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: otel-lab
+  labels:
+    app: order-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+      annotations:
+        # 注入 sidecar collector（值 = OpenTelemetryCollector(mode:sidecar) 的名稱）
+        sidecar.opentelemetry.io/inject: "app-sidecar"
+        # 注入 Java auto-instrumentation（值 = Instrumentation CR 的名稱）
+        instrumentation.opentelemetry.io/inject-java: "lab-instrumentation"
+        # 明確指定要注入到哪個 container（多 container 時必填，這裡示範好習慣）
+        instrumentation.opentelemetry.io/container-names: "order-service"
+    spec:
+      containers:
+        - name: order-service
+          image: order-service:lab
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_URL
+              value: jdbc:postgresql://postgres:5432/labdb
+            - name: DB_USER
+              value: lab
+            - name: DB_PASSWORD
+              value: labpass
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10

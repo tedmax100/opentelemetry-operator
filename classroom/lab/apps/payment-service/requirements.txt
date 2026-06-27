@@ -1,0 +1,17 @@
+flask==3.0.3
+requests==2.32.3
+psycopg2-binary==2.9.9
+
+# python:3.12-slim 不再內建 setuptools，而 opentelemetry-instrumentation 需要 pkg_resources
+setuptools==75.6.0
+
+# --- 遷移後「要保留」的：業務 code 用 global API 寫自訂 metrics/log ---
+opentelemetry-api==1.27.0
+
+# --- 遷移後「可移除」的：SDK + exporter + 各 library 的 instrumentation ---
+# （Stage 4 之後，這些由 Operator 注入的 auto-instrumentation 取代）
+opentelemetry-sdk==1.27.0
+opentelemetry-exporter-otlp-proto-grpc==1.27.0
+opentelemetry-instrumentation-flask==0.48b0
+opentelemetry-instrumentation-requests==0.48b0
+opentelemetry-instrumentation-psycopg2==0.48b0

@@ -1,0 +1,87 @@
+# Stage 3 / 4 共用：Instrumentation CR + 一個 sidecar-mode collector。
+#
+# 兩個物件搭配使用：
+#   - OpenTelemetryCollector(mode: sidecar)：被注入到 app Pod 內，當 app 的本地 OTLP 端點，
+#     負責 batch 後轉送到 Stage 2 的 agent collector（span load balancer）。
+#   - Instrumentation：描述「auto-instrument 時要設定哪些 OTel 環境變數」，
+#     SDK 把 telemetry 送到 localhost:4318（也就是同 Pod 的 sidecar）。
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: app-sidecar
+  namespace: otel-lab
+spec:
+  mode: sidecar
+  image: otel/opentelemetry-collector-contrib:0.153.0
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch: {}
+    exporters:
+      # sidecar 把資料往上送到 agent（daemonset），由 agent 做 trace ID 的 loadbalancing。
+      otlp/agent:
+        endpoint: agent-collector.otel-lab.svc.cluster.local:4317
+        tls:
+          insecure: true
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlp/agent]
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlp/agent]
+        logs:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlp/agent]
+---
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: lab-instrumentation
+  namespace: otel-lab
+spec:
+  # SDK 送到同 Pod 的 sidecar 的 http 端點（4318）。
+  # 統一用 http/protobuf，避免 Java / Python 預設協議不一致造成的埠位混淆。
+  exporter:
+    endpoint: http://localhost:4318
+  env:
+    - name: OTEL_EXPORTER_OTLP_PROTOCOL
+      value: http/protobuf
+    # 三個訊號都要 export（auto-instrument 預設 metrics/logs 不一定開）
+    - name: OTEL_TRACES_EXPORTER
+      value: otlp
+    - name: OTEL_METRICS_EXPORTER
+      value: otlp
+    - name: OTEL_LOGS_EXPORTER
+      value: otlp
+    # lab 為了快點看到自訂 metrics，把匯出間隔從預設 60s 調成 5s
+    - name: OTEL_METRIC_EXPORT_INTERVAL
+      value: "5000"
+  propagators:
+    - tracecontext
+    - baggage
+  # SDK 端先全收（100%），真正的取樣決策交給 gateway 的 tail_sampling。
+  sampler:
+    type: parentbased_always_on
+  java:
+    env:
+      - name: OTEL_INSTRUMENTATION_COMMON_DEFAULT_ENABLED
+        value: "true"
+  python:
+    env:
+      - name: OTEL_PYTHON_LOG_CORRELATION
+        value: "true"
+      # 讓 python agent 自動掛上 logging handler，把 app 的自訂 log 轉成 OTLP 送出
+      - name: OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED
+        value: "true"

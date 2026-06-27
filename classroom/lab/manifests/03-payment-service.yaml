@@ -1,0 +1,110 @@
+# Stage 1：Python payment-service，「手動裝好 OTel」的版本。
+#
+# 重點觀察：這個 Pod 裡有「兩個」container：
+#   1. payment-service       —— app，內含手動初始化的 OTel SDK
+#   2. otel-collector-sidecar —— 手動掛上的 sidecar collector（自己管設定）
+#
+# collector 的設定寫在下面這個 ConfigMap，要改設定就得改這份 manifest、重新 apply。
+# Stage 4 會把這整套「手動」改成「Operator 管理」。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payment-collector-config
+  namespace: otel-lab
+data:
+  collector.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch: {}
+    exporters:
+      debug:
+        verbosity: detailed
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+        metrics:           # app 的自訂 metrics（payments.count / payments.amount）
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+        logs:              # app 的自訂 log
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  namespace: otel-lab
+  labels:
+    app: payment-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+    spec:
+      containers:
+        # --- container 1：app（含手動 OTel SDK）---
+        - name: payment-service
+          image: payment-service:lab
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5000
+          env:
+            - name: MANUAL_OTEL          # Stage 1：走手動 OTel SDK
+              value: "true"
+            - name: OTEL_SERVICE_NAME
+              value: payment-service
+            # app 把 telemetry 送到「同一個 Pod 內」的 sidecar collector
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://localhost:4317
+            - name: ORDER_SERVICE_URL
+              value: http://order-service:8080
+            - name: DB_DSN
+              value: host=postgres port=5432 dbname=labdb user=lab password=labpass
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+        # --- container 2：手動掛的 sidecar collector ---
+        - name: otel-collector-sidecar
+          image: otel/opentelemetry-collector-contrib:0.153.0
+          args: ["--config=/etc/otel/collector.yaml"]
+          ports:
+            - containerPort: 4317
+            - containerPort: 4318
+          volumeMounts:
+            - name: collector-config
+              mountPath: /etc/otel
+      volumes:
+        - name: collector-config
+          configMap:
+            name: payment-collector-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service
+  namespace: otel-lab
+spec:
+  selector:
+    app: payment-service
+  ports:
+    - port: 5000
+      targetPort: 5000

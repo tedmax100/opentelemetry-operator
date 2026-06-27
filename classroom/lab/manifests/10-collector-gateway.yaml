@@ -1,0 +1,63 @@
+# Stage 2：gateway collector —— 由 Operator 管理。
+#
+# 角色：所有 telemetry 的匯流點，負責 tail sampling（先全收 100%）。
+# 用 statefulset 模式 + 多副本，搭配 agent 層的 loadbalancing exporter，
+# 確保「同一條 trace 的所有 span」都落在同一個 gateway 副本上。
+#
+# Operator 會自動建立：
+#   - StatefulSet gateway-collector
+#   - Service     gateway-collector            (ClusterIP，給 metrics/logs)
+#   - Service     gateway-collector-headless   (給 agent 的 dns resolver 解析每個副本)
+#   - ConfigMap   gateway-collector-<hash>
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: gateway
+  namespace: otel-lab
+  labels:
+    # 讓 Stage 5 的 OpAMP Bridge 把這個 collector 納入管理 / 回報 effective config
+    opentelemetry.io/opamp-managed: "true"
+spec:
+  mode: statefulset
+  replicas: 2
+  image: otel/opentelemetry-collector-contrib:0.153.0
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      # tail_sampling：等一條 trace 的 span 收集一段時間後，再依 policy 決定保留與否。
+      # 這裡的 policy 是 always_sample = 保留 100%（先全收，之後要丟再加 policy）。
+      tail_sampling:
+        decision_wait: 10s
+        num_traces: 50000
+        policies:
+          - name: keep-everything
+            type: always_sample
+      batch: {}
+
+    exporters:
+      # lab 用 debug exporter 直接把資料印到 collector log，方便觀察。
+      # 真實環境這裡會換成 otlp / otlphttp 指向 Jaeger、Tempo、後端 SaaS 等。
+      debug:
+        verbosity: detailed
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [tail_sampling, batch]
+          exporters: [debug]
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+        logs:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]

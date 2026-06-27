@@ -1,0 +1,56 @@
+# Stage 1：Java order-service，「完全沒有 OTel」的版本。
+# 這是情境裡那個還沒裝任何 telemetry 的 Java 服務。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: otel-lab
+  labels:
+    app: order-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      containers:
+        - name: order-service
+          image: order-service:lab        # Stage 0 build 出來、import 進 k3d 的 image
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_URL
+              value: jdbc:postgresql://postgres:5432/labdb
+            - name: DB_USER
+              value: lab
+            - name: DB_PASSWORD
+              value: labpass
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: otel-lab
+spec:
+  selector:
+    app: order-service
+  ports:
+    - port: 8080
+      targetPort: 8080
