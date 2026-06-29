@@ -57,7 +57,7 @@
 |---|---|---|---|
 | Stage 0 | [00-setup.md](./00-setup.md) | 建 k3d cluster、用 Helm 裝 Operator（chart 自簽憑證，免 cert-manager）、build 兩個 app image | 環境準備 |
 | Stage 1 | [01-baseline-apps.md](./01-baseline-apps.md) | 部署 PostgreSQL + Java(無 OTel) + Python(手動 OTel)，重現「現況」 | 重現情境 |
-| Stage 2 | [02-collector-gateway-and-loadbalancer.md](./02-collector-gateway-and-loadbalancer.md) | 用 Operator 建 **gateway collector**（logs/metrics/traces + tail sampling 100%）+ **agent collector**（loadbalancing exporter，做 span load balancer） | 需求 2 |
+| Stage 2 | [02-collector-gateway-and-loadbalancer.md](./02-collector-gateway-and-loadbalancer.md) | 用 Operator 建 **gateway collector**（tail sampling：error/slow 全留 + 其餘 10%）+ **agent collector**（loadbalancing 做 span load balancer，並負責 `memory_limiter`/`k8sattributes`+RBAC/`resourcedetection` 補強）| 需求 2 |
 | Stage 3 | [03-java-sidecar-and-autoinstrument.md](./03-java-sidecar-and-autoinstrument.md) | 用 Operator 替 Java 服務注入 **sidecar collector + auto-instrument**（零改動 app） | 需求 3 |
 | Stage 4 | [04-python-migrate-to-operator.md](./04-python-migrate-to-operator.md) | 把 Python 手動裝的 collector + SDK 換成 **Operator 管理的 sidecar + auto-instrument** | 需求 4 |
 | Stage 5 | [05-opamp-bridge-control-plane.md](./05-opamp-bridge-control-plane.md) | 用 **OpAMP Bridge**（repo 內建的 Go server）遠端管理 Operator 建立的 collector | 需求 5 |

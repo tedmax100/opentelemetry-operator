@@ -31,14 +31,38 @@ spec:
             endpoint: 0.0.0.0:4318
 
     processors:
-      # tail_sampling：等一條 trace 的 span 收集一段時間後，再依 policy 決定保留與否。
-      # 這裡的 policy 是 always_sample = 保留 100%（先全收，之後要丟再加 policy）。
+      # memory_limiter：所有 collector 的「第一道」processor。
+      # blueprint / Skyscanner 都把它列為必備——背壓機制，記憶體逼近上限時主動拒收，
+      # 避免 collector 自己 OOM 被 kill 後造成更大規模的資料遺失。
+      # 必須放在每條 pipeline 的最前面，才能在資料進到後面昂貴的 processor 前先擋下。
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 400          # 真實環境建議改用 limit_percentage 並設 spec.resources（見教材 2.3）
+        spike_limit_mib: 100
+
+      # tail_sampling：等一條 trace 的 span 收齊一段時間後，再依 policy 決定保留與否。
+      # policy 之間是 OR：任一條 policy 判定 sample，整條 trace 就保留。
+      # 這套組合就是 Mastodon reference implementation 的策略——
+      #   錯誤全留、慢的全留、其餘只留一小部分（成本控制靠採樣，不是靠 resource limit）。
       tail_sampling:
         decision_wait: 10s
         num_traces: 50000
         policies:
-          - name: keep-everything
-            type: always_sample
+          # 1) 有 error 的 trace 100% 保留（最有除錯價值）
+          - name: errors
+            type: status_code
+            status_code:
+              status_codes: [ERROR]
+          # 2) 慢的 trace 100% 保留（latency > 500ms）
+          - name: slow
+            type: latency
+            latency:
+              threshold_ms: 500
+          # 3) 其餘正常又快的 trace，只隨機留 10%（降量、降成本）
+          - name: random-10pct
+            type: probabilistic
+            probabilistic:
+              sampling_percentage: 10
       batch: {}
 
     exporters:
@@ -51,13 +75,13 @@ spec:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [tail_sampling, batch]
+          processors: [memory_limiter, tail_sampling, batch]
           exporters: [debug]
         metrics:
           receivers: [otlp]
-          processors: [batch]
+          processors: [memory_limiter, batch]
           exporters: [debug]
         logs:
           receivers: [otlp]
-          processors: [batch]
+          processors: [memory_limiter, batch]
           exporters: [debug]

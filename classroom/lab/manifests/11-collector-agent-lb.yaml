@@ -4,9 +4,53 @@
 # 然後用 loadbalancing exporter 以 trace ID 當 routing key，把同一條 trace 的所有 span
 # 固定送到「同一個」gateway 副本，讓 gateway 的 tail_sampling 能看到完整的 trace。
 #
+# 這份 agent 同時是做「k8s 中繼資料補強」的最佳位置：agent 就在 app 所在的節點上、
+# 直接收 app 送來的資料，能用 pod IP / 連線來源正確對應到是哪個 Pod。
+# blueprint 把 k8s_attributes / resourcedetection 放在「靠近來源的 local 層」就是這個道理。
+#
 # Operator 會自動建立：
 #   - DaemonSet agent-collector
 #   - Service   agent-collector  (ClusterIP，4317/4318)
+---
+# k8sattributes / resourcedetection 需要讀叢集資源，必須有對應的 RBAC。
+# blueprint 特別點名：少了這些權限，補強會「靜默失敗」（資料照流，但少了 k8s 標籤）。
+#
+# 註：Operator 本身有能力依 collector config 自動建立這組 RBAC（見教材 2.3 的說明），
+# 但會受 feature gate 與 operator 自身權限影響。這裡選擇「明確寫出來」，
+# 一來保證 lab 在任何環境都能跑，二來讓你看清楚 k8s_attributes 到底需要哪些權限。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-collector
+  namespace: otel-lab
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-lab-agent-collector
+rules:
+  # k8sattributes：靠 pod IP 對應到 Pod，並讀取 namespace / deployment 名稱等中繼資料
+  - apiGroups: [""]
+    resources: ["pods", "namespaces", "nodes"]
+    verbs: ["get", "list", "watch"]
+  # k8sattributes 要從 ReplicaSet 反推出 Deployment 名稱
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-lab-agent-collector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: otel-lab-agent-collector
+subjects:
+  - kind: ServiceAccount
+    name: agent-collector
+    namespace: otel-lab
+---
 apiVersion: opentelemetry.io/v1beta1
 kind: OpenTelemetryCollector
 metadata:
@@ -18,6 +62,8 @@ metadata:
 spec:
   mode: daemonset
   image: otel/opentelemetry-collector-contrib:0.153.0
+  # 綁定上面那個帶 RBAC 的 ServiceAccount（不設的話 Operator 會建一個沒有額外權限的 SA）
+  serviceAccount: agent-collector
   config:
     receivers:
       otlp:
@@ -26,6 +72,50 @@ spec:
             endpoint: 0.0.0.0:4317
           http:
             endpoint: 0.0.0.0:4318
+
+    processors:
+      # 第一道防線：記憶體背壓（同 gateway，見 10-collector-gateway.yaml 的說明）
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 200
+        spike_limit_mib: 50
+
+      # k8sattributes：把「這筆 telemetry 來自哪個 Pod / namespace / deployment / node」
+      # 補成 resource attribute。注意元件型別是 k8sattributes（沒有底線）。
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.pod.name
+            - k8s.pod.uid
+            - k8s.deployment.name
+            - k8s.node.name
+        pod_association:
+          # 先試用 resource attribute 裡的 pod IP 對應，沒有就退回用連線來源 IP
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.ip
+          - sources:
+              - from: connection
+
+      # resourcedetection：自動帶上環境/節點層級的 resource attribute
+      # （env 讀 OTEL_RESOURCE_ATTRIBUTES、k8snode 讀節點名等）。
+      resourcedetection:
+        detectors: [env, system, k8snode]
+        timeout: 5s
+        override: false
+        system:
+          hostname_sources: [os]
+
+      # resource：補上組織自訂屬性，落實語意慣例。
+      # 三份文件都強調 deployment.environment 這類屬性要在平台層統一注入。
+      resource:
+        attributes:
+          - key: deployment.environment.name
+            value: lab
+            action: upsert
 
     exporters:
       # ★ 核心：span load balancer
@@ -50,12 +140,18 @@ spec:
 
     service:
       pipelines:
+        # 三條 pipeline 都先過 memory_limiter，再做 k8s/資源補強。
+        # 補強放在 agent（靠近來源）才能用 pod IP 正確對應，gateway 收到的是
+        # agent 轉來的流量，pod IP 已不是原始 app 的，無法再做這層對應。
         traces:
           receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, resourcedetection, resource]
           exporters: [load_balancing]
         metrics:
           receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, resourcedetection, resource]
           exporters: [otlp/gateway]
         logs:
           receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, resourcedetection, resource]
           exporters: [otlp/gateway]
