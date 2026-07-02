@@ -261,4 +261,5 @@ k3d cluster delete otel-lab
 | | |
 |---|---|
 | 上一步 | [← Stage 4](./04-python-migrate-to-operator.md) |
+| 下一步 | [Stage 6：透過 OpAMP 遠端下推版本升級 →](./06-opamp-remote-version-upgrade.md) |
 | 回到 | [README](./README.md) |

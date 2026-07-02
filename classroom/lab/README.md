@@ -61,6 +61,7 @@
 | Stage 3 | [03-java-sidecar-and-autoinstrument.md](./03-java-sidecar-and-autoinstrument.md) | 用 Operator 替 Java 服務注入 **sidecar collector + auto-instrument**（零改動 app） | 需求 3 |
 | Stage 4 | [04-python-migrate-to-operator.md](./04-python-migrate-to-operator.md) | 把 Python 手動裝的 collector + SDK 換成 **Operator 管理的 sidecar + auto-instrument** | 需求 4 |
 | Stage 5 | [05-opamp-bridge-control-plane.md](./05-opamp-bridge-control-plane.md) | 用 **OpAMP Bridge**（repo 內建的 Go server）遠端管理 Operator 建立的 collector | 需求 5 |
+| Stage 6 | [06-opamp-remote-version-upgrade.md](./06-opamp-remote-version-upgrade.md) | 透過 OpAMP RemoteConfig **遠端下推 collector 版本升級**（改 `spec.image`），不用 `kubectl apply` | 需求 5 延伸 |
 
 每個階段結尾都有「驗證」與「練習」，跟 classroom 章節同樣格式。
 
@@ -108,7 +109,7 @@ tail sampling 是「先收集一條 trace 的所有 span，再決定整條要不
 ```
 classroom/lab/
 ├── README.md                                  ← 你正在看的這份
-├── 00-setup.md  ...  05-opamp-bridge-control-plane.md
+├── 00-setup.md  ...  06-opamp-remote-version-upgrade.md
 ├── apps/
 │   ├── order-service/        ← Java / Spring Boot（最小可跑，連 PostgreSQL）
 │   │   ├── pom.xml
@@ -128,7 +129,7 @@ classroom/lab/
     ├── 20-instrumentation.yaml        ← Stage 3/4：Instrumentation CR
     ├── 21-order-service-instrumented.yaml  ← Stage 3：Java 注入版
     ├── 30-payment-service-operator.yaml    ← Stage 4：Python 改用 Operator
-    └── 40-opampbridge.yaml            ← Stage 5
+    └── 40-opampbridge.yaml            ← Stage 5/6（Stage 6 沿用同一份 manifest，多開 admin port）
 ```
 
 ---

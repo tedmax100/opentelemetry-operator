@@ -31,6 +31,7 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 4320
+            - containerPort: 8080  # Stage 6：/upgrade 管理用 HTTP endpoint
 ---
 apiVersion: v1
 kind: Service
@@ -41,8 +42,12 @@ spec:
   selector:
     app: opamp-server
   ports:
-    - port: 4320
+    - name: opamp
+      port: 4320
       targetPort: 4320
+    - name: admin
+      port: 8080
+      targetPort: 8080
 ---
 # Operator 會幫 OpAMPBridge 建好 ServiceAccount（名稱 = <bridge>-opamp-bridge），
 # 但「讀取 OpenTelemetryCollector CR」的權限要自己授予，否則 bridge 會報
