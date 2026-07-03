@@ -1,0 +1,186 @@
+# 參考範例（不是 k3d lab 的一部分，不要在 otel-lab cluster 裡 apply 這份檔案）
+#
+# 這是對照公司真實服務 llm-guard-api 的
+#   104isgd-devops-gitops-apps/llm-guard-api/overlays/lab/lab.values.yaml
+# 改寫出來的「假如改用 Operator 管理」版本，示範：
+#   - 原本手動掛的 sidecar collector（initContainers + corp104Configs.otel-collector.yaml）
+#     怎麼變成一份 sidecar 模式的 OpenTelemetryCollector CR
+#   - 原本手動塞的一長串 OTEL_* env（含手工拼出來的 OTEL_RESOURCE_ATTRIBUTES）
+#     怎麼變成一份 Instrumentation CR
+#
+# 對照本 lab 的章節：sidecar CR 的設計對應 Stage 3/7（app-sidecar / order-sidecar 的模式，
+# 這裡示範的是「llm-guard-api 想要自己的 sidecar，不跟別的服務共用」），
+# Instrumentation CR 對應 Stage 4（Python auto-instrument）。
+#
+# 命名空間沿用 lab.values.yaml 裡 alerting rule 用到的真實 namespace 命名慣例
+# （l-devops-llm-guard-api），實際套用時請改成你們的 namespace。
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: llm-guard-api-sidecar
+  namespace: l-devops-llm-guard-api
+spec:
+  mode: sidecar
+  # 對照原本 initContainers[0].image：公司內部 build 的 collector-contrib，
+  # Operator 的 spec.image 可以是任何 image reference，包含私有 registry 的自製 image，
+  # 不是只能用官方的 otel/opentelemetry-collector-contrib。
+  image: ghcr.io/104corp/otel-collector/collector-contrib:0.142.0
+  # 對照 initContainers[0].env 的 GOMEMLIMIT；跟 config 無關，是純 Go runtime 調校，
+  # Operator 一樣支援在 CR 上加任意 env。
+  env:
+    - name: GOMEMLIMIT
+      value: 192MiB
+  # 對照 initContainers[0].resources
+  resources:
+    limits:
+      cpu: "0.3"
+      memory: 256Mi
+    requests:
+      cpu: "0.1"
+      memory: 128Mi
+  # 對照 corp104Configs 裡的 otel-collector.yaml，內容幾乎原封不動搬過來——
+  # 這正是這份 lab 一直強調的：collector config 本身沒變，改變的只是「這份設定
+  # 用什麼機制送進 Pod」（原本是 Helm 塞 ConfigMap + initContainer，現在是 Operator
+  # 依 sidecar annotation 注入）。
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch: {}
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+    exporters:
+      debug:
+        verbosity: detailed
+      otlp/tempo:
+        endpoint: span-lb.open-telemetry.svc.cluster.local:4317
+        timeout: 5s
+        tls:
+          insecure: true
+      otlp/metrics:
+        endpoint: collector.open-telemetry.svc.cluster.local:4317
+        timeout: 5s
+        tls:
+          insecure: true
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+    service:
+      extensions: [health_check]
+      telemetry:
+        logs:
+          level: warn
+          disable_stacktrace: true
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp/tempo]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp/metrics]
+        # 原本沒有 logs pipeline（lab.values.yaml 的 OTEL_LOGS_EXPORTER 也設 none），
+        # 這裡刻意不加，維持跟現況一致的行為——不要在「翻譯」的過程中順便多做原本沒有的事。
+---
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: llm-guard-api-instrumentation
+  namespace: l-devops-llm-guard-api
+spec:
+  # 對照：
+  #   OTEL_EXPORTER_OTLP_ENDPOINT: http://127.0.0.1:4318
+  #   OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  exporter:
+    endpoint: http://localhost:4318
+  # 對照 OTEL_TRACES_SAMPLER: parentbased_always_on
+  sampler:
+    type: parentbased_always_on
+  env:
+    # 對照 OTEL_TRACES_EXPORTER / OTEL_METRICS_EXPORTER：Python 注入邏輯的
+    # getDefaultPythonEnvVars()（internal/instrumentation/python.go）沒設的話
+    # 也會自動補上一樣的值，這兩行其實可省；寫在這裡（而不是 python.env）是為了
+    # 跨語言明確表態，不是必要的。
+    - name: OTEL_TRACES_EXPORTER
+      value: otlp
+    - name: OTEL_METRICS_EXPORTER
+      value: otlp
+    # OTEL_LOGS_EXPORTER：這行不能省！getDefaultPythonEnvVars() 沒設的話預設會補
+    # "otlp"（打開 log 匯出），跟原本要的 "none" 相反——這是唯一一個「不寫會真的
+    # 改變行為」的 exporter 設定。
+    - name: OTEL_LOGS_EXPORTER
+      value: none
+    # 對照 OTEL_SEMCONV_STABILITY_OPT_IN: http
+    - name: OTEL_SEMCONV_STABILITY_OPT_IN
+      value: http
+  python:
+    env:
+      # 對照 OTEL_PYTHON_LOG_CORRELATION: "true"——這個開關全公司 Python 服務大概都會
+      # 想要一致（log 要不要帶 trace_id/span_id），放在 CR 裡合理。
+      - name: OTEL_PYTHON_LOG_CORRELATION
+        value: "true"
+      # 注意：OTEL_PYTHON_EXCLUDED_URLS 沒有放在這裡——見下面「為什麼 excluded_urls
+      # 特別拿出來講」那段說明，這是刻意的設計選擇，不是漏寫。
+  # 沒有搬過來的東西，以及為什麼：
+  #
+  # 0. OTEL_PYTHON_EXCLUDED_URLS："/healthz,/readyz,/metrics"
+  #    這個「沒搬」是這幾條裡最值得注意的一條，因為原因跟其他都不一樣：
+  #    不是 Operator 自動幫你補、也不是架構調整建議，而是**根本不該放進 CR**。
+  #    健康檢查/監控端點的路徑因服務而異（別的服務可能是 /health、
+  #    /internal/metrics），如果寫進這份 CR，等於強迫「所有指向這份
+  #    Instrumentation CR 的服務」都排除同一組 URL——這正是 Stage 7 講的
+  #    「CR 是共用的，改 CR 就是改給所有指到它的 Pod」同一個陷阱，只是
+  #    這次主角是 Instrumentation CR，不是 sidecar collector CR。
+  #
+  #    但這裡有一個比 Stage 7「clone 一份 CR」更省事的解法：Operator 合併
+  #    env 的順序是「container 原本就有的 env 優先，CR 的 env 只補沒設過的」
+  #    （appendIfNotSet，見 internal/instrumentation/python.go:57：
+  #    `container.Env = appendIfNotSet(container.Env, pythonSpec.Env...)`）。
+  #    也就是說，只要這個值繼續留在 60-example-llm-guard-api-values-after.yaml
+  #    的 web.env 裡（就跟原本 lab.values.yaml 一樣），CR 完全不用管這個欄位、
+  #    也不用為了這一條就 clone 一份 CR：container 自己的值天生就會贏。
+  #    這對「客製化 SDK 端設定」跟「客製化 sidecar collector 設定」是很不一樣的
+  #    地方——sidecar collector 的 config 是整份取代、沒有欄位優先權可言，
+  #    只能整份 clone（Stage 7 做法）；Instrumentation CR 因為是逐個 env 合併，
+  #    很多「這個服務想要不一樣」的需求根本不用 clone CR，留在 app 自己的
+  #    Deployment env 就解決了。
+  #
+  # 1. OTEL_SERVICE_NAME: llm-guard-api
+  #    不用手動設。Operator 的 chooseServiceName() 會依 Deployment 名稱自動推導
+  #    （這份 chart 的 Deployment 名稱就是 llm-guard-api），效果一樣，但少一行要維護。
+  #    如果想保險一點、不想依賴自動推導，也可以在 Pod annotation 加
+  #    `resource.opentelemetry.io/service.name: llm-guard-api` 明確指定。
+  #
+  # 2. OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  #    不用手動設。Python 注入邏輯的 getDefaultPythonEnvVars()
+  #    （internal/instrumentation/python.go:117-122）在使用者沒設時，本來就會補上
+  #    一模一樣的 "http/protobuf"（原文註解：「it is what our autoinstrumentation
+  #    supports」）。這條是「Operator 剛好幫你補了跟原值相同的預設」，不是「不需要
+  #    這個設定」——如果哪天官方預設改了、或想換 gRPC，記得要手動加回來。
+  #
+  # 3. OTEL_RESOURCE_ATTRIBUTES 那一長串手工拼的 k8s.namespace.name/k8s.pod.name/
+  #    k8s.pod.ip/k8s.node.name：
+  #    這正是 Stage 2 的 agent 層 k8sattributes processor 要解決的事——如果
+  #    `span-lb.open-telemetry` 這個中心 collector 有掛 k8sattributes（且 pod IP
+  #    對應得上，不是像這裡直接送到跨 namespace 的中心 collector 就會失真），
+  #    這些屬性應該在那一層統一補、不用每個服務自己手刻一份一模一樣的邏輯。
+  #    **這條跟前面兩條不同，不是「Operator 自動幫你做」，是建議性的架構調整**——
+  #    如果目前的 span-lb 沒有做 k8sattributes，拿掉這行會真的少掉這些屬性，
+  #    請先確認前提再拿掉，不確定的話可以先保留在這裡當過渡。
+  #
+  # 4. OTEL_ZERO_CODE_MODE: "true"：
+  #    這是公司 base image 自己判斷「要不要用 opentelemetry-instrument 包起來執行」
+  #    的旗標。改用 Operator 的 inject-python 後，auto-instrument 是靠 webhook 注入
+  #    PYTHONPATH + sitecustomize.py 完成的（Stage 4 §4.2.1、classroom 第 6 章），
+  #    跟「用 opentelemetry-instrument 包一層」是兩條不同機制，二選一即可——
+  #    改用 Operator 之後這個旗標應該拿掉，否則變成兩套 auto-instrument 邏輯同時作用
+  #    （Stage 4 練習 4 動手題示範過的「雙重 instrumentation」風險）。

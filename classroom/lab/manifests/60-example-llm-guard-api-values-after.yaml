@@ -1,0 +1,263 @@
+# 參考範例（不是 k3d lab 的一部分）——對照原本的
+#   104isgd-devops-gitops-apps/llm-guard-api/overlays/lab/lab.values.yaml
+# 改用 Operator 之後，這份 values.yaml 會變成什麼樣子。
+#
+# 搭配 60-example-llm-guard-api-operator.yaml（Instrumentation + sidecar CR，
+# 由平台團隊集中維護、所有服務共用或各自 clone 一份，不放在這個 app 自己的 repo 裡）。
+#
+# 拿掉的東西 vs 原檔案：
+#   - web.initContainers（手動掛的 otel-collector sidecar）—— 改由 Operator
+#     依 sidecar.opentelemetry.io/inject annotation 注入
+#   - web.corp104Configs 裡的 otel-collector.yaml —— 設定內容原封不動搬進
+#     60-example-llm-guard-api-operator.yaml 的 sidecar CR，這裡不用再放一份
+#   - web.env 裡大部分 OTEL_*、K8S_POD_NAME/K8S_POD_NAMESPACE/K8S_NODE_NAME/
+#     K8S_POD_IP —— 改由 Instrumentation CR 提供，K8S_* 那組手工拼 resource
+#     attribute 的 Downward API env 完全不用要了
+#   - OTEL_ZERO_CODE_MODE —— 改用 Operator 的 inject-python 機制，不需要這個旗標
+#
+# 沒拿掉、刻意留著的例外：
+#   - OTEL_PYTHON_EXCLUDED_URLS：這是「這個服務自己的健康檢查路徑」，每個服務
+#     可能不一樣，不該放進共用的 Instrumentation CR。留在這裡是刻意的，見下面
+#     web.env 那段註解、以及 60-example-llm-guard-api-operator.yaml 裡「0.」條目
+#     的完整說明（跟 Operator 的 env 合併順序有關：container 自己的 env 優先）。
+#
+# 加的東西：
+#   - web.podAnnotations 三行，觸發 Operator 注入 sidecar + auto-instrument
+#
+# 其餘（probes、resources、ingress、corp104Secrets、scanners.yml、
+# metrics/alerting）完全不用動——這些跟 OTel 無關，維持原樣。
+web:
+  image:
+    repository: ghcr.io/104corp/ai-agent-llm-guard-api
+    tag: 0.3.34
+  replicaCount: 1
+  securityContext:
+    runAsUser: 1000
+  startupProbe:
+    enabled: true
+    httpGet:
+      path: /healthz
+      port: 8080
+    failureThreshold: 30
+    periodSeconds: 10
+  livenessProbe:
+    enabled: true
+    periodSeconds: 30
+    timeoutSeconds: 3
+    successThreshold: 1
+    failureThreshold: 3
+    httpGet:
+      path: /healthz
+      port: 8080
+  readinessProbe:
+    enabled: true
+    periodSeconds: 30
+    timeoutSeconds: 3
+    successThreshold: 1
+    failureThreshold: 3
+    httpGet:
+      path: /readyz
+      port: 8080
+  istio:
+    enabled: false
+  resources:
+    limits:
+      cpu: "8"
+      memory: 10Gi
+    requests:
+      cpu: "3"
+      memory: 3Gi
+  corp104Secrets:
+  - secret: devops/llm-guard-api/credentials
+    k8sSecret: credentials
+  - secret: devops/llm-guard-api/alert
+    k8sSecret: web-alert-manager
+  ingress:
+    enabled: true
+    hosts:
+    - host: llm-guard-api
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        svcPort: http
+
+  # ↓↓↓ 這三行是唯一跟「原本 150 行 OTel 手動設定」相關的新增內容 ↓↓↓
+  #
+  # sidecar.opentelemetry.io/inject 指到 60-example-llm-guard-api-operator.yaml
+  # 裡的 llm-guard-api-sidecar CR；inject-python 指到同檔案的
+  # llm-guard-api-instrumentation CR；container-names 明確指定要注入到哪個
+  # container（這個 chart 的 app container 名稱固定是 Chart.name，也就是
+  # "llm-guard-api"，見 web chart 的 templates/_helper.tpl）。
+  # 三個 annotation 的語意跟本 lab Stage 3 §3.3 逐一拆解過的完全一樣。
+  podAnnotations:
+    sidecar.opentelemetry.io/inject: "llm-guard-api-sidecar"
+    instrumentation.opentelemetry.io/inject-python: "llm-guard-api-instrumentation"
+    instrumentation.opentelemetry.io/container-names: "llm-guard-api"
+
+  envMap:
+    AUTH_TOKEN:
+      valueFrom:
+        secretKeyRef:
+          key: bearer_token
+          name: credentials
+    GCP_CREDENTIALS_CONTENT:
+      valueFrom:
+        secretKeyRef:
+          key: GCP_CREDENTIALS_CONTENT
+          name: credentials
+  # 只剩業務邏輯用的 env + 一條例外。
+  env:
+  # 例外：OTEL_PYTHON_EXCLUDED_URLS 特意留在這裡，沒有搬進 Instrumentation CR。
+  # 這是「這個服務自己的健康檢查路徑」，每個服務可能都不一樣，不該放進共用/
+  # 服務層級的 CR（見 60-example-llm-guard-api-operator.yaml 裡「0.」那條的完整
+  # 說明）。留在這裡靠的是 Operator 的 env 合併順序：container 自己的 env 優先，
+  # CR 的 env 只補沒設過的欄位，所以這一行天生就會贏過 CR 裡（如果有）的同名設定。
+  - name: OTEL_PYTHON_EXCLUDED_URLS
+    value: "/healthz,/readyz,/metrics"
+  - name: RESPONSIBLE_AI_ENABLED
+    value: "true"
+  - name: GCP_PROJECT_ID
+    value: "lab-service-project-c-agent"
+  - name: MODEL_ARMOR_LOCATION
+    value: "asia-southeast1"
+  - name: MODEL_ARMOR_TEMPLATE
+    value: "input-responsible-ai-template-medium"
+
+  corp104Configs:
+  - name: scanners.yml
+    mountPath: /home/user/app/config/scanners.yml
+    value: |
+      app:
+        name: ${APP_NAME:LLM Guard API}
+        log_level: ${LOG_LEVEL:INFO}
+        log_json: ${LOG_JSON:true}
+        scan_fail_fast: ${SCAN_FAIL_FAST:false}
+        scan_prompt_timeout: ${SCAN_PROMPT_TIMEOUT:30}
+        scan_output_timeout: ${SCAN_OUTPUT_TIMEOUT:30}
+        lazy_load: ${LAZY_LOAD:false}
+
+      rate_limit:
+        enabled: ${RATE_LIMIT_ENABLED:false}
+        limit: ${RATE_LIMIT_LIMIT:100/minute}
+
+      auth:
+        type: http_bearer
+        token: ${AUTH_TOKEN:}
+
+      metrics:
+        exporter: ${METRICS_TYPE:prometheus}
+        endpoint: ${METRICS_ENDPOINT:}
+
+      input_scanners:
+      - type: PromptInjection
+        params:
+          threshold: 0.92
+          match_type: chunks
+          model_max_length: 256
+
+      output_scanners:
+      - type: JSON
+        params:
+          required_elements: 0
+          repair: true
+
+  metrics:
+    enabled: true
+    serviceMonitors:
+    - name: web
+      spec:
+        endpoints:
+        - port: http
+          path: /metrics
+    prometheusRules:
+      - name: web
+        spec:
+          groups:
+          - name: devops-llm-guard-api
+            rules:
+              - alert: High5xxErrorRate
+                annotations:
+                  description: 5xx High Error Rate on *{{ $labels.host }}* is greater than 5% of total requests.
+                  summary: 5xx High Error Rate on *{{ $labels.ingress }}*.
+                expr: |
+                  (sum(rate(nginx_ingress_controller_requests{ingress=~"^(lab|stg|prod)-.*-llm-guard-api-web$",status=~'5..'}[1m])) by (host) / sum(rate(nginx_ingress_controller_requests{ingress=~"^(lab|stg|prod)-.*-llm-guard-api-web$"}[1m])) by (host)) * 100 > 5
+                for: 60s
+                labels:
+                  severity: critical
+              - alert: High4xxErrorRate
+                annotations:
+                  description: 4xx High Error Rate on *{{ $labels.host }}* is greater than 5% of total requests.
+                  summary: 4xx High Error Rate on *{{ $labels.ingress }}*.
+                expr: |
+                  (sum(rate(nginx_ingress_controller_requests{ingress=~"^(lab|stg|prod)-.*-llm-guard-api-web$",status=~'4..'}[1m])) by (host) / sum(rate(nginx_ingress_controller_requests{ingress=~"^(lab|stg|prod)-.*-llm-guard-api-web$"}[1m])) by (host)) * 100 > 5
+                for: 60s
+                labels:
+                  severity: critical
+              - alert: HighResponseTime
+                annotations:
+                  summary: "High response time detected in {{ $labels.host }}"
+                  description: "The 99th percentile response time in namespace {{ $labels.host }} is greater than 5 seconds."
+                expr: |
+                  histogram_quantile(0.99,sum(rate(nginx_ingress_controller_request_duration_seconds_bucket{ingress=~"^(lab|stg|prod)-.*-llm-guard-api-web$"}[5m])) by (le,host)) > 5
+                for: 60s
+                labels:
+                  severity: critical
+              - alert: HighCpuUsage
+                annotations:
+                  summary: "High CPU usage detected in {{ $labels.pod }} / {{ $labels.container }} in namespace {{ $labels.namespace }}"
+                  description: "{{ $labels.pod }} / {{ $labels.container }} in namespace {{ $labels.namespace }} is using more than 80% of its requested CPU."
+                expr: |
+                  sum(rate(container_cpu_usage_seconds_total{namespace=~"^(l|s|p)-devops-llm-guard-api$"}[5m])) by (pod, container, namespace)
+                  /
+                  sum(kube_pod_container_resource_limits{namespace=~"^(l|s|p)-devops-llm-guard-api$",resource="cpu"}) by (pod, container, namespace)
+                  * 100 > 80
+                for: 60s
+                labels:
+                  severity: critical
+              - alert: HighMemoryUsage
+                annotations:
+                  summary: "High memory usage detected in {{ $labels.pod }} / {{ $labels.container }} in namespace {{ $labels.namespace }}"
+                  description: "{{ $labels.pod }} / {{ $labels.container }} in namespace {{ $labels.namespace }} is using more than 80% of its requested memory."
+                expr: |
+                  sum(container_memory_usage_bytes{namespace=~"^(l|s|p)-devops-llm-guard-api$"}) by (pod, container, namespace)
+                  /
+                  sum(kube_pod_container_resource_limits{namespace=~"^(l|s|p)-devops-llm-guard-api$",resource="memory"}) by (pod, container, namespace)
+                  * 100 > 80
+                for: 60s
+                labels:
+                  severity: critical
+              - alert: HighPromptInjectionRejectionRate
+                annotations:
+                  summary: "High PromptInjection rejection rate in {{ $labels.namespace }}"
+                  description: "PromptInjection rejections are high. This alert fires when (invalid / total) > 10% over 5m and total events > 100."
+                expr: |
+                  (
+                    sum(rate(scanners_valid_total{namespace=~"^(l|s|p)-devops-llm-guard-api$", scanner="PromptInjection", source="input", valid="false"}[5m])) by (namespace)
+                    /
+                    sum(rate(scanners_valid_total{namespace=~"^(l|s|p)-devops-llm-guard-api$", scanner="PromptInjection", source="input"}[5m])) by (namespace)
+                  ) * 100 > 10
+                  and
+                  sum(increase(scanners_valid_total{namespace=~"^(l|s|p)-devops-llm-guard-api$", scanner="PromptInjection", source="input"}[5m])) by (namespace) > 100
+                for: 60s
+                labels:
+                  severity: critical
+    alertmanagerConfigs:
+      - name: alert-manager
+        spec:
+          route:
+            groupBy:
+            - namespace
+            matchers:
+            - name: severity
+              value: critical
+            receiver: teams
+          receivers:
+          - name: teams
+            webhookConfigs:
+            - urlSecret:
+                # 104DevOps > LAB_ERROR
+                key: teams-webhook-url
+                name: web-alert-manager
+              sendResolved: true
+              httpConfig:
+                proxyURL: ""

@@ -232,7 +232,11 @@ classroom/lab/
     ├── 30-payment-service-operator.yaml    ← Stage 4：Python 改用 Operator
     ├── 40-opampbridge.yaml            ← Stage 5/6（Stage 6 沿用同一份 manifest，多開 admin port）
     ├── 50-order-sidecar-attributes.yaml    ← Stage 7：order team 專屬 sidecar CR（attributes + OTTL）
-    └── 51-order-service-team-sidecar.yaml  ← Stage 7：order-service 改指向 order-sidecar
+    ├── 51-order-service-team-sidecar.yaml  ← Stage 7：order-service 改指向 order-sidecar
+    ├── 60-example-llm-guard-api-operator.yaml      ← 真實案例參考：把公司服務 llm-guard-api
+    │                                                  現有的手動 sidecar+env 改寫成 Instrumentation
+    │                                                  + sidecar CR（不是 k3d lab 的一部分，不要 apply）
+    └── 60-example-llm-guard-api-values-after.yaml  ← 同上，改用 Operator 後 Helm values.yaml 的樣子
 ```
 
 ---
