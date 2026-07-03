@@ -158,7 +158,20 @@ kubectl -n otel-lab get pod -l app=payment-service -o yaml \
 #   OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf  ← Python 注入預設用 http/protobuf
 ```
 
-> 對照 classroom 第 6 章：Python 注入和 Java 不同，不是掛 `-javaagent`，而是用 `PYTHONPATH` + `sitecustomize.py` 在直譯器啟動時自動套用 instrumentation。Operator 也會把 `OTEL_EXPORTER_OTLP_PROTOCOL` 設成 `http/protobuf`（因為官方 Python autoinstrumentation 走這個協議）——這正是我們把 sidecar 設成同時開 4317/4318、Instrumentation endpoint 指向 `:4318` 的原因。
+> **背景知識展開（classroom 第 6 章）：為什麼 Python 注入方式跟 Java 完全不同？**
+>
+> Operator 對每個語言都有專屬的注入邏輯（[`internal/instrumentation/`](../../internal/instrumentation/) 下各一個檔案），但共同模式都是「initContainer 把 agent/SDK 複製進共享 emptyDir → 主 container 掛載該 volume → 用一個環境變數讓 runtime 在啟動時自動載入」：
+>
+> | 語言 | initContainer 動作 | 讓 runtime 載入的 env var | 檔案 |
+> |---|---|---|---|
+> | Java | `cp javaagent.jar` | `JAVA_TOOL_OPTIONS=-javaagent:...` | `javaagent.go` |
+> | Python | `cp -r autoinstrumentation/.` | `PYTHONPATH=...`（直譯器啟動時載入 `sitecustomize.py`） | `python.go` |
+> | Node.js | `cp -r autoinstrumentation/.` | `NODE_OPTIONS=--require ...` | `nodejs.go` |
+> | Go（例外） | 不是 initContainer，是**額外的 sidecar container**，用 eBPF 追蹤主 process | 無（改用 `otel-go-auto-target-exe` 指定要 hook 的執行檔） | `golang.go` |
+>
+> Python 用 `PYTHONPATH` 而非「agent」的原因：Python 直譯器沒有像 JVM 那樣的 `-javaagent` 掛載機制，但可以透過 `sitecustomize.py`（Python 啟動時會自動 import 的模組）在 import 使用者程式碼之前，先把 instrumentation library 掛上去，效果等同 Java 的 agent。
+>
+> Operator 也會把 `OTEL_EXPORTER_OTLP_PROTOCOL` 設成 `http/protobuf`（因為官方 Python autoinstrumentation 走這個協議）——這正是我們把 sidecar 設成同時開 4317/4318、Instrumentation endpoint 指向 `:4318` 的原因。
 
 ---
 
@@ -202,7 +215,9 @@ gwlogs 25s | grep 'payment processed' | head
 
 > 業務 code 一行沒改，自訂 metrics/log 卻無縫接到了新的管線——這就是 4.2.1「留 API、去 SDK」設計的回報。
 
-至此，**整條 trace（payment → order → postgres）以及自訂 metrics/log，全部由 Operator 管理的管線收集，經 agent 的 loadbalancing 收斂、gateway 的 tail_sampling 100% 保留。**
+至此，**整條 trace（payment → order → postgres）以及自訂 metrics/log，全部由 Operator 管理的管線收集，經 agent 的 loadbalancing 收斂、送進 gateway 交給 tail_sampling 決策（error/slow 全留、其餘只隨機留 10%——metrics/log 不經過這個 processor，不受影響）。**
+
+> 因為 tail_sampling 只留一部分「又快又成功」的 trace，實際跑這份 lab 打單一筆流量，有很高機率在 gateway log 看不到對應的 trace（這是預期行為，不是管線壞了）。要穩定看到結果，建議連續打十幾二十筆流量再檢查。
 
 ---
 

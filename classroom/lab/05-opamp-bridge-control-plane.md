@@ -182,7 +182,7 @@ kubectl -n otel-lab logs deployment/opamp-server --since=60s | grep -iE 'agent r
 
 **這就是答案的具體呈現**：一個獨立的 Go server，透過 OpAMP Bridge，集中看到了 Operator 在 cluster 裡管理的 collector（`agent` 的 `load_balancing`、`gateway` 的 `tail_sampling`）此刻「實際生效的設定」——不需要你逐一 `kubectl get configmap`。
 
-> 小觀察：bridge 會依 `heartbeatInterval` 週期性重連並重送一次完整狀態，所以 server log 會反覆出現 agent connect / report。這是正常行為。
+> **小觀察（實測修正）：** 原本以為 bridge 會依 `heartbeatInterval` 週期性重連並重送一次完整狀態，實際跑起來並不是這樣——bridge 只在**連線建立當下**送一次完整的 `AgentDescription` + `EffectiveConfig`，之後的 heartbeat 只帶 `Health`，不會重送 effective config。所以 server log 之後只會反覆看到 `health: healthy=...`，看不到 `agent report`/`effective-config` 再次出現，這是正常行為，不代表 bridge 斷線。Stage 6 會利用（也會踩到）這個行為。
 
 ---
 
@@ -204,7 +204,7 @@ kubectl -n otel-lab logs deployment/opamp-server --since=60s | grep -iE 'agent r
         └──────────┬───────────┘                            │
                    ▼ (各自 sidecar → agent)                  ▼
               agent-collector ───────────────▶ gateway-collector x2
-                                               (tail_sampling 100%, Stage 2)
+                                               (tail_sampling: error/slow 全留 + 其餘 10%, Stage 2)
                                                          │ debug exporter
                                                          ▼
                                                     （真實環境換成 Tempo/Jaeger/SaaS）
@@ -215,7 +215,7 @@ kubectl -n otel-lab logs deployment/opamp-server --since=60s | grep -iE 'agent r
 | 需求 | 由哪一階段達成 |
 |---|---|
 | 1. 既有 Python(手動) + Java(無) + PostgreSQL | Stage 1 重現 |
-| 2. Operator 建 collector(log/metric/trace + tail sampling 100%) + span load balancer | Stage 2 |
+| 2. Operator 建 collector(log/metric/trace + tail sampling：error/slow 全留、其餘 10%) + span load balancer | Stage 2 |
 | 3. Operator 替 Java 注入 sidecar collector + auto-instrument | Stage 3 |
 | 4. Python 從手動改用 Operator + auto-instrument | Stage 4 |
 | 5. 用 Go server（OpAMP Bridge + OpAMP server）管理 Operator | Stage 5 |

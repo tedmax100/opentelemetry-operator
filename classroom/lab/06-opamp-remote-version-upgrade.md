@@ -40,7 +40,9 @@ func (c Client) update(ctx context.Context, o, n *v1beta1.OpenTelemetryCollector
 │ (kubectl / curl) ────────────────────────▶│   :8080 (admin HTTP)  │
 └──────────────┘                            │   登記 pendingImage    │
                                              └──────────┬─────────────┘
-                                                        │ 等下一次心跳
+                                                        │ 等 bridge 下次送完整報告
+                                                        │（實測：只有重新連線才會送，
+                                                        │ 一般 heartbeat 不含 EffectiveConfig）
                                                         ▼
 ┌───────────────────┐   report(EffectiveConfig)  ┌────────────────────┐
 │  lab-bridge        │ ─────────────────────────▶│  opamp-server       │
@@ -59,7 +61,7 @@ func (c Client) update(ctx context.Context, o, n *v1beta1.OpenTelemetryCollector
    Deployment/StatefulSet/DaemonSet 滾動更新出新版 collector Pod
 ```
 
-**為什麼不能主動 push，只能「等對方連線」？** OpAMP 是 agent 先連上 server 的協議（bridge 是 client，server 是 WebSocket server）。Server 沒辦法主動對外連線去推設定，只能在 `OnMessage` 的回應裡夾帶 `RemoteConfig`。所以 `/upgrade` 端點做的事只是「登記意圖」，真正送出去要等 bridge 下一次心跳（`heartbeatInterval`，預設頻率見 `OpAMPBridge` CR）。
+**為什麼不能主動 push，只能「等對方連線」？** OpAMP 是 agent 先連上 server 的協議（bridge 是 client，server 是 WebSocket server）。Server 沒辦法主動對外連線去推設定，只能在 `OnMessage` 的回應裡夾帶 `RemoteConfig`。所以 `/upgrade` 端點做的事只是「登記意圖」，真正送出去要等 bridge 送下一次**完整報告**（`AgentDescription` + `EffectiveConfig`）——**實測這支 bridge 只在連線建立當下送一次完整報告，之後的 `heartbeatInterval` 心跳只帶 `Health`，不會重送 `EffectiveConfig`**，所以「等待」在一般情況下永遠等不到，得靠 6.4 那樣手動重啟 bridge 強迫它重新連線。
 
 ---
 
@@ -68,7 +70,7 @@ func (c Client) update(ctx context.Context, o, n *v1beta1.OpenTelemetryCollector
 **`apps/opamp-server/main.go`** 新增：
 
 - `state`：記憶體狀態，`effectiveConfigs`（每個 collector 最後回報的完整 CR YAML）+ `pendingImage`（還沒送出去的目標版本）
-- `POST /upgrade`：body 是 `{"key": "otel-lab/gateway", "image": "otel/opentelemetry-collector-k8s:0.111.0"}`，`key` 格式跟 bridge 回報時一致（`namespace/name`，見 `cmd/operator-opamp-bridge/internal/operator/kube_resource_key.go`）
+- `POST /upgrade`：body 是 `{"key": "otel-lab/gateway", "image": "otel/opentelemetry-collector-contrib:0.155.0"}`，`key` 格式跟 bridge 回報時一致（`namespace/name`，見 `cmd/operator-opamp-bridge/internal/operator/kube_resource_key.go`）
 - `onMessage`：每次收到 `EffectiveConfig` 時，先把它存進 `effectiveConfigs`；如果這個 key 剛好有 pending image，就呼叫 `patchImage` 把 YAML 裡的 `spec.image` 換掉，包進 `ServerToAgent.RemoteConfig` 回傳，並算 `ConfigHash`（sha256）
 - `patchImage`：用 `map[string]any` + `sigs.k8s.io/yaml` 解析/改寫，只動 `spec.image`，其餘欄位原封不動——因為 bridge 的 `update()` 是整份 spec 取代，漏改的欄位會被還原成 RemoteConfig 裡的值，不是保留原本 CR 上的值
 
@@ -102,17 +104,26 @@ kubectl -n otel-lab port-forward svc/opamp-server 8080:8080 &
 
 curl -X POST localhost:8080/upgrade \
   -H 'Content-Type: application/json' \
-  -d '{"key":"otel-lab/gateway","image":"otel/opentelemetry-collector-k8s:0.111.0"}'
+  -d '{"key":"otel-lab/gateway","image":"otel/opentelemetry-collector-contrib:0.155.0"}'
 # 預期：HTTP 202
 ```
 
-看 server log，等 bridge 下一次心跳把 `gateway` 的 report 帶進來，應該會看到：
+**關鍵一步（跟 Stage 5 §5.5 的「小觀察」對應）：** bridge 只在連線建立當下送一次完整的 `EffectiveConfig`，之後的心跳只帶 `Health`，不會主動重送——所以「等下一次心跳」實際上等不到。要讓 bridge 重新送一次完整報告（帶著我們剛剛登記的目標 image），得逼它重新連線一次：
+
+```bash
+kubectl -n otel-lab rollout restart deployment/lab-bridge-opamp-bridge
+kubectl -n otel-lab rollout status deployment/lab-bridge-opamp-bridge --timeout=60s
+```
+
+重啟後看 server log，應該會看到：
 
 ```
-upgrade registered for "otel-lab/gateway" -> "otel/opentelemetry-collector-k8s:0.111.0" (下次收到它的 report 時會下推)
+---- agent report (instanceUid=...) ----
   effective-config[otel-lab/gateway]: ...
-  >> pushing image upgrade for otel-lab/gateway -> otel/opentelemetry-collector-k8s:0.111.0
+  >> pushing image upgrade for otel-lab/gateway -> otel/opentelemetry-collector-contrib:0.155.0
 ```
+
+> 真實環境不會靠「重啟 bridge」這麼粗暴的方式觸發下推——會是 bridge 本身改成定期重送、或是在 `/upgrade` 之類的 admin API 裡直接呼叫 bridge 暴露的某種「立即重新報告」端點（目前這支教學用 bridge 沒有這個端點）。這裡示範的是「RemoteConfig 下推確實能改到 image」這件事本身有沒有效，觸發時機的粗糙留給你在練習裡補強。
 
 確認 CR 與 Pod 真的換了版本：
 
@@ -122,11 +133,13 @@ kubectl -n otel-lab rollout status statefulset/gateway-collector
 kubectl -n otel-lab get pods -l app.kubernetes.io/component=opentelemetry-collector -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
 ```
 
+> **為什麼這裡只示範 `gateway`、換成 `agent` 會失敗？** `40-opampbridge.yaml` 的 `componentsAllowed` 白名單只開放 `receivers: [otlp]`、`processors: [batch, memory_limiter, tail_sampling]`、`exporters: [debug, otlp, load_balancing]`。`gateway` 的 pipeline（`memory_limiter`/`tail_sampling`/`batch` + `debug` exporter）剛好整組都在白名單裡，所以 `Client.Apply()` 的 `validateComponents` 檢查會過。但 `agent` 的 pipeline 用了 `k8sattributes`/`resourcedetection`/`resource`（Stage 2 補的生產級強化）——這三個都不在白名單，`validateComponents` 會擋下整個 `Apply()`，`image` 也就不會真的換。而且這是**靜默失敗**：server log 一樣會印出 `>> pushing image upgrade`（因為 server 端沒有 validateComponents 的概念，那是 bridge 端才做的檢查），但 bridge 端會記一筆 `Items in config are not allowed` 的錯誤、CR 完全沒被更新。想讓 `agent` 也能示範，得先把 `k8sattributes`/`resourcedetection`/`resource` 加進 `40-opampbridge.yaml` 的 `componentsAllowed.processors`。
+
 ---
 
 ## 6.5 練習 6
 
-**閱讀理解題：** `validateComponents`（`client.go:115-146`）只檢查 `receivers`/`processors`/`exporters` 三個 key。如果一個惡意或設定錯誤的 OpAMP server，在 RemoteConfig 裡連 `metadata.namespace` 都改了（例如把 `gateway` CR「搬」到別的 namespace），bridge 端會發生什麼事？（提示：看 `update()` 只保留 `o.ObjectMeta`，這代表 `n.ObjectMeta` 会被整個蓋掉，包含 `Namespace`——再想想 `k8sClient.Update` 對一個「跟原資源 namespace 不同」的物件會回什麼錯誤。）
+**閱讀理解題：** `validateComponents`（`client.go:115-146`）只檢查 `receivers`/`processors`/`exporters` 三個 key。如果一個惡意或設定錯誤的 OpAMP server，在 RemoteConfig 裡連 `metadata.namespace` 都改了（例如把 `gateway` CR「搬」到別的 namespace），bridge 端會發生什麼事？（提示：看 `update()` 只保留 `o.ObjectMeta`，這代表 `n.ObjectMeta` 會被整個蓋掉，包含 `Namespace`——再想想 `k8sClient.Update` 對一個「跟原資源 namespace 不同」的物件會回什麼錯誤。）
 
 **動手題：** 目前 `patchImage` 只保護了「不要漏改欄位」，沒有限制「這個 image 是不是平台工程團隊核可的版本」。幫 `/upgrade` handler 加一個白名單（例如環境變數 `ALLOWED_IMAGES`，逗號分隔），拒絕不在清單裡的 image。
 
@@ -150,4 +163,5 @@ kubectl -n otel-lab get pods -l app.kubernetes.io/component=opentelemetry-collec
 | | |
 |---|---|
 | 上一步 | [← Stage 5](./05-opamp-bridge-control-plane.md) |
+| 下一步 | [Stage 7：業務單位客製化 attributes（attributes / OTTL）→](./07-team-scoped-attributes.md) |
 | 回到 | [README](./README.md) |

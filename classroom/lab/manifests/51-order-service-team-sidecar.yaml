@@ -1,0 +1,55 @@
+# Stage 7：order-service 改指向 order team 專屬的 sidecar CR。
+#
+# 跟 21-order-service-instrumented.yaml 唯一的差別：
+#   sidecar.opentelemetry.io/inject 從 "app-sidecar" 換成 "order-sidecar"
+# 其餘（inject-java、container-names、image、env）完全沒動。
+#
+# payment-service（30-payment-service-operator.yaml）的 annotation 仍是 "app-sidecar"，
+# 這份檔案不會、也不需要去動它。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: otel-lab
+  labels:
+    app: order-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+      annotations:
+        # 唯一改動的一行：指向 Stage 7 新建的 order-sidecar，而不是共用的 app-sidecar
+        sidecar.opentelemetry.io/inject: "order-sidecar"
+        instrumentation.opentelemetry.io/inject-java: "lab-instrumentation"
+        instrumentation.opentelemetry.io/container-names: "order-service"
+    spec:
+      containers:
+        - name: order-service
+          image: order-service:lab
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_URL
+              value: jdbc:postgresql://postgres:5432/labdb
+            - name: DB_USER
+              value: lab
+            - name: DB_PASSWORD
+              value: labpass
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10

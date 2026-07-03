@@ -67,7 +67,14 @@ helm install opentelemetry-operator open-telemetry/opentelemetry-operator \
 # chart 0.117.0 對應 operator appVersion 0.153.0（與本 lab 其他元件版本一致）
 ```
 
-> **webhook 憑證哪來的？** classroom 第 4 章說過：auto-instrumentation 與 sidecar 注入都靠 **MutatingAdmissionWebhook** 攔截 Pod 建立請求，而 webhook 需要 TLS 憑證。
+> **webhook 憑證哪來的？背景知識展開（classroom 第 4 章）：** `kubectl apply` 不會直接建立 Pod，中間會先經過 API Server 的 **Mutating Admission Webhook**：
+>
+> ```
+> kubectl apply → API Server → Mutating Webhook（Operator 在這裡改 Pod spec）→ 存入 etcd → 排程
+> ```
+>
+> Operator 把「解碼 Pod → 呼叫各個 `PodMutator.Mutate()` → 算出 JSON Patch → 回傳」這段邏輯放在 [`internal/webhook/podmutation/webhookhandler.go`](../../internal/webhook/podmutation/webhookhandler.go)（第 60 行起）。這個 HTTP handler 要跑在 HTTPS 上，API Server 才會信任它——這就是「webhook 需要 TLS 憑證」的原因，**憑證本身跟注入邏輯無關，只是 API Server ↔ Webhook Server 這段連線的身分驗證**。
+>
 > - 用 bundle manifest 時，這份憑證由 **cert-manager** 簽發（所以那條路一定要先裝 cert-manager）。
 > - 用 Helm + `autoGenerateCert.enabled=true` 時，**chart 自己產生自簽 CA 與憑證**並塞進 webhook 設定，因此不需要 cert-manager。
 >
@@ -91,7 +98,14 @@ kubectl get crd | grep opentelemetry.io
 #   targetallocators.opentelemetry.io
 ```
 
-這四個 CRD 對應 classroom 第 2 章講的四個 Custom Resource。
+這四個 CRD 對應 Operator 的四種 Custom Resource（背景知識展開，classroom 第 2 章）：
+
+| CRD | 這個 lab 會用它做什麼 | 特性 |
+|---|---|---|
+| `opentelemetrycollectors.opentelemetry.io` | Stage 2 的 gateway/agent、Stage 3/4 的 sidecar 範本 | `spec.mode` 決定建 Deployment / DaemonSet / StatefulSet，或不建資源直接注入（`sidecar`） |
+| `instrumentations.opentelemetry.io` | Stage 3/4 的 `lab-instrumentation` | **本身不建立 Pod**，只是「注入設定範本」，等 Pod annotation 指到它才生效 |
+| `opampbridges.opentelemetry.io` | Stage 5 | 讓 Operator 建一個連到外部 OpAMP server 的 Deployment |
+| `targetallocators.opentelemetry.io` | 本 lab 未使用 | 分配 Prometheus scrape target 給多個 Collector 副本 |
 
 ---
 

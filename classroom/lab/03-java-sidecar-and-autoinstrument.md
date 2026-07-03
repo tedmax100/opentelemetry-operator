@@ -36,7 +36,23 @@ order-service Pod（注入後）
 | `instrumentation.opentelemetry.io/inject-java` | 要套用的 **Instrumentation CR 名稱**（`lab-instrumentation`） | 注入 javaagent initContainer + 一堆 `OTEL_*` env |
 | `instrumentation.opentelemetry.io/container-names` | 要注入的 **app container 名稱清單**（逗號分隔） | 限定 instrumentation 注入到哪幾個 container |
 
-> classroom 第 4、6 章詳細講過這背後的 webhook 與各語言注入差異，這裡是把它跑起來。3.3 會把這三個 annotation 逐一拆解。
+> **背景知識展開（classroom 第 4、6 章）：這三個 annotation 為什麼「一 apply 就生效」？**
+>
+> Pod 建立請求送到 API Server 時，會先經過 Operator 註冊的 **Mutating Admission Webhook**（[`internal/webhook/podmutation/webhookhandler.go`](../../internal/webhook/podmutation/webhookhandler.go)），流程分三層：
+>
+> ```
+> ① HTTP 層  webhookhandler.go     解碼 Pod → 呼叫每個 PodMutator.Mutate()
+> ② 決策層  instrumentation/podmutator.go
+>            讀 annotation → 依名稱/true/false/namespace 規則找到對應的 Instrumentation CR
+> ③ 執行層  instrumentation/sdk.go → javaagent.go / python.go ...
+>            實際修改 Pod spec：加 initContainer、加 env、加 volume
+> ```
+>
+> 這一步是**同步**發生的：Pod 在真正建立前，Webhook 已經把修改後的版本算成 JSON Patch 回傳給 API Server，所以你 `kubectl apply` 完馬上 `kubectl get pod -o yaml` 就能看到注入結果，不需要等任何非同步流程。
+>
+> 三個 annotation 分別對應決策層裡的三個判斷：`sidecar.opentelemetry.io/inject` 決定要不要疊加 sidecar collector（另一條獨立的 mutator 邏輯）；`inject-java` 決定要不要跑 Java 的注入邏輯（`javaagent.go`）；`container-names` 則是傳給執行層，告訴它「改哪個 container 的 env/volumeMounts」。
+>
+> 這裡是把 classroom 第 4、6 章講過的機制實際跑起來。3.3 會把這三個 annotation 逐一拆解。
 
 ---
 
@@ -195,7 +211,17 @@ kubectl -n otel-lab get pod -l app=order-service -o yaml \
 #   OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
 ```
 
-> `OTEL_SERVICE_NAME` 是 Operator 依推導規則自動填的（classroom 第 6 章講過優先級：annotation > env > Deployment/Pod 名稱）。
+> **`OTEL_SERVICE_NAME` 怎麼推導出來的？（背景知識展開，classroom 第 6 章）** Operator 的 `chooseServiceName()`（[`internal/instrumentation/sdk.go`](../../internal/instrumentation/sdk.go) 第 528 行）依序嘗試以下來源，找到第一個非空值就用它：
+>
+> ```
+> 1. Pod annotation：resource.opentelemetry.io/service.name
+> 2. Pod label：app.kubernetes.io/name（需開啟 useLabelsForResourceAttributes）
+> 3~8. 所屬 Deployment → ReplicaSet → StatefulSet → DaemonSet → CronJob → Job 的名稱
+> 9. Pod 名稱
+> 10. Container 名稱（最後手段）
+> ```
+>
+> 這份 lab 沒有特別設 annotation 或 `app.kubernetes.io/name` label，所以落到第 3 層——`order-service` 這個名字是 Operator 查 Pod 的 `ownerReference` 反推出 Deployment 名稱得到的，不是寫死在哪份設定裡。
 
 ---
 
@@ -252,7 +278,7 @@ order-service ──(注入的 sidecar otc-container)────┤
                                     agent-collector (loadbalancing)
                                                  │ routing_key: traceID
                                                  ▼
-                                    gateway-collector x2 (tail_sampling 100%)
+                                    gateway-collector x2 (tail_sampling: error/slow 全留 + 其餘 10%)
                                                  │
                                                  ▼  debug exporter
 ```
@@ -282,7 +308,7 @@ gwlogs 20s | grep -c 'order-service'
 1. 加一個 initContainer，把 javaagent.jar 從 instrumentation image 複製到 emptyDir
 2. 在 app container 注入 `JAVA_TOOL_OPTIONS=-javaagent:...` 環境變數，JVM 啟動時讀到它就掛上 agent
 
-所以「零改 code、零改 image」，全靠 admission 階段的動態 patch。對應 classroom 第 4 章的 JSON Patch 與 initContainer 注入、第 6 章的 Java 注入細節。
+所以「零改 code、零改 image」，全靠 admission 階段的動態 patch——這裡示範的是 Java 的 initContainer 模式；對應 classroom 第 4 章（[`internal/webhook/podmutation/webhookhandler.go`](../../internal/webhook/podmutation/webhookhandler.go) 的 JSON Patch 機制）與第 6 章（[`internal/instrumentation/javaagent.go`](../../internal/instrumentation/javaagent.go) 的 Java 注入細節；Stage 4 會看到 Python 用 `PYTHONPATH` 而不是 initContainer + agent 的方式，Go 甚至改用 eBPF sidecar，三者機制完全不同）。
 </details>
 
 ---

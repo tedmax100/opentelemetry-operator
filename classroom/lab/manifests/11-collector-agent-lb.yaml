@@ -64,6 +64,14 @@ spec:
   image: otel/opentelemetry-collector-contrib:0.153.0
   # 綁定上面那個帶 RBAC 的 ServiceAccount（不設的話 Operator 會建一個沒有額外權限的 SA）
   serviceAccount: agent-collector
+  # resourcedetection 的 k8snode detector 需要知道「自己在哪個節點」，
+  # 得靠 Downward API 把 node 名稱注入成環境變數——Operator 不會自動幫你加這個，
+  # 因為 collector config 對 Operator 而言只是不透明的 YAML，它不知道你用了 k8snode。
+  env:
+    - name: K8S_NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
   config:
     receivers:
       otlp:

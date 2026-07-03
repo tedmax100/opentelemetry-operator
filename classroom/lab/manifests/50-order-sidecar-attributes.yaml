@@ -1,0 +1,68 @@
+# Stage 7：order team 專屬的 sidecar collector CR。
+#
+# 跟 20-instrumentation.yaml 裡的 app-sidecar 幾乎一樣（receivers/exporters 不變），
+# 差別只在 processors 多了兩個區塊：
+#   - attributes/order_team：插入固定的業務標籤（team / cost_center）
+#   - transform/order_team（OTTL）：條件式加值 + 用 regex 遮罩 db.statement
+#
+# 這是一份「複製品」而不是改 app-sidecar 本人：
+# payment-service 的 annotation 仍然指向 app-sidecar，完全不受這裡的變動影響。
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: order-sidecar
+  namespace: otel-lab
+spec:
+  mode: sidecar
+  image: otel/opentelemetry-collector-contrib:0.153.0
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch: {}
+      # 靜態業務標籤：插進每一個 span，供計費/部門歸屬使用。
+      # action: insert 代表「key 不存在才寫入」，不會覆蓋 app 自己已經設定的同名屬性。
+      attributes/order_team:
+        actions:
+          - key: team
+            value: "order-team"
+            action: insert
+          - key: cost_center
+            value: "CC-4821"
+            action: insert
+      # OTTL：條件式加值 + 用 regex 遮罩 SQL 語句，這兩件事 attributes processor 做不到。
+      transform/order_team:
+        error_mode: ignore
+        trace_statements:
+          - context: span
+            statements:
+              # 只對 order-service 的 HTTP server span 加一個衍生欄位
+              - set(attributes["order.endpoint_group"], "checkout") where name == "POST /orders"
+              # 遮罩 JDBC span 的 db.statement：不管 agent 有沒有先把值參數化成 ?，
+              # 都會把 VALUES(...) 整段換成固定字串，避免真的帶著明碼參數值外流。
+              - replace_pattern(attributes["db.statement"], "(?i)VALUES\\s*\\([^)]*\\)", "VALUES (***redacted***)") where attributes["db.statement"] != nil
+    exporters:
+      # 跟 app-sidecar 一樣，往上送到 Stage 2 的 agent（span load balancer）。
+      otlp/agent:
+        endpoint: agent-collector.otel-lab.svc.cluster.local:4317
+        tls:
+          insecure: true
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [attributes/order_team, transform/order_team, batch]
+          exporters: [otlp/agent]
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlp/agent]
+        logs:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlp/agent]

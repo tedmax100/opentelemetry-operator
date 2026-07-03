@@ -236,6 +236,8 @@ kubectl -n otel-lab get pods -l app.kubernetes.io/instance=otel-lab.gateway \
 > kubectl -n otel-lab logs statefulset/gateway-collector | grep -E 'k8s.pod.name|deployment.environment' | head
 > ```
 
+> **重要提醒，會影響後面每一階段的「打流量看 gateway log」驗證步驟：** 上面的 `tail_sampling` policy 是 `errors`（100% 留）+ `slow`（>500ms，100% 留）+ `random-10pct`（其餘只留 10%）的 OR 組合。Stage 3 之後你打的多半是「又快又成功」的請求，**只有大約 10% 的機率會被留下、出現在 gateway 的 debug log 裡**——這是 tail_sampling 故意設計成本控制的結果，不是 pipeline 壞了。單打一筆 curl 常常什麼都看不到；**照著文件操作時，若某個驗證步驟的 grep 沒有輸出，先連續打 15~20 筆流量再檢查一次**，而不要假設哪裡出錯了。自訂 metrics / log（Stage 4 會看到）不經過 `tail_sampling`（只有 traces pipeline 有這個 processor），所以每一筆都會出現，不受此限制影響。
+
 ---
 
 ## 2.6 這一階段對應到的 Operator 機制
