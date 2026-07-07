@@ -1,0 +1,88 @@
+# Stage 8：gateway collector 的「真後端」版本。
+#
+# 跟 10-collector-gateway.yaml 的差別只有 exporters 與 pipelines 的出口：
+#   - traces  ：debug → otlp/tempo（gRPC 4317）+ debug 保留
+#   - metrics ：debug → otlphttp/prometheus（Prometheus 原生 OTLP ingestion）+ debug 保留
+#   - logs    ：維持 debug（要接 Loki 是同一招，練習題）
+#
+# 治理教學點：CR 名稱同樣是 gateway —— apply 這份 = 改既有 CR 的 spec.config，
+# Operator 偵測差異後自動滾動更新 StatefulSet。全公司的資料出口改道，
+# 業務團隊的 Deployment、sidecar、agent 一個都不用動。
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: gateway
+  namespace: otel-lab
+  labels:
+    opentelemetry.io/opamp-managed: "true"
+spec:
+  mode: statefulset
+  replicas: 2
+  image: otel/opentelemetry-collector-contrib:0.153.0
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 400
+        spike_limit_mib: 100
+
+      # 與 Stage 2 完全相同的 tail sampling 政策。
+      # 看 Tempo 時記得：正常又快的 trace 只有 10% 會出現——這不是掉資料，
+      # 是政策在生效；打一個 error 請求則 100% 必出現。
+      tail_sampling:
+        decision_wait: 10s
+        num_traces: 50000
+        policies:
+          - name: errors
+            type: status_code
+            status_code:
+              status_codes: [ERROR]
+          - name: slow
+            type: latency
+            latency:
+              threshold_ms: 500
+          - name: random-10pct
+            type: probabilistic
+            probabilistic:
+              sampling_percentage: 10
+      batch: {}
+
+    exporters:
+      # 保留 debug：前面各 stage 的「看 gateway log 驗證」照樣可用
+      debug:
+        verbosity: detailed
+
+      # traces → Tempo（OTLP gRPC）
+      otlp/tempo:
+        endpoint: tempo.otel-lab.svc.cluster.local:4317
+        tls:
+          insecure: true
+
+      # metrics → Prometheus 原生 OTLP ingestion。
+      # 注意是 otlphttp：Prometheus 只收 HTTP 的 /api/v1/otlp（exporter 會自動補
+      # /v1/metrics 路徑），而且 Prometheus 要開 --web.enable-otlp-receiver。
+      otlphttp/prometheus:
+        endpoint: http://prometheus.otel-lab.svc.cluster.local:9090/api/v1/otlp
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, tail_sampling, batch]
+          exporters: [otlp/tempo, debug]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlphttp/prometheus, debug]
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [debug]

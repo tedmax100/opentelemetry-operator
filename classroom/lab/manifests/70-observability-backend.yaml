@@ -1,0 +1,248 @@
+# Stage 8：真實 observability 後端 —— Tempo（traces）+ Prometheus（metrics）+ Grafana（UI）。
+#
+# 定位：前面所有 stage 的 gateway 都用 debug exporter「印出來看」；這個 stage 把
+# gateway 的出口接上真後端，親眼看到「本來沒有 OTel 的服務，加上 annotation 之後
+# signal 出現在 Grafana」。
+#
+# 三個元件都是 lab 級的最小部署：單副本、emptyDir（Pod 重啟資料就沒了）、無認證。
+# 生產環境請用各自的 Helm chart 部署並做持久化/HA，這裡刻意從簡。
+---
+# ---------- Tempo（traces 後端）----------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  namespace: otel-lab
+data:
+  tempo.yaml: |
+    server:
+      http_listen_port: 3200        # 查詢 API，Grafana 的 Tempo datasource 指這裡
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317   # gateway 的 otlp/tempo exporter 送這裡
+            http:
+              endpoint: 0.0.0.0:4318
+    compactor:
+      compaction:
+        block_retention: 1h            # lab 用：只留一小時
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/blocks
+        wal:
+          path: /var/tempo/wal
+    usage_report:
+      reporting_enabled: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  namespace: otel-lab
+  labels:
+    app: tempo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tempo
+  template:
+    metadata:
+      labels:
+        app: tempo
+    spec:
+      securityContext:
+        fsGroup: 10001              # tempo image 以非 root 執行，讓它寫得進 emptyDir
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.7.2
+          args: ["-config.file=/etc/tempo/tempo.yaml"]
+          ports:
+            - containerPort: 3200
+            - containerPort: 4317
+            - containerPort: 4318
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tempo
+            - name: data
+              mountPath: /var/tempo
+      volumes:
+        - name: config
+          configMap:
+            name: tempo-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  namespace: otel-lab
+spec:
+  selector:
+    app: tempo
+  ports:
+    - name: http
+      port: 3200
+      targetPort: 3200
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+---
+# ---------- Prometheus（metrics 後端，用原生 OTLP ingestion，不走 scrape）----------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: otel-lab
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    # OTLP 推送進來的樣本常帶輕微亂序（多副本 collector、batch 延遲），開容忍窗
+    storage:
+      tsdb:
+        out_of_order_time_window: 30m
+    # 把這幾個 resource attribute 升格成每條 series 的 label；
+    # 沒列的 resource attribute 只會躺在 target_info 這個 metric 上
+    otlp:
+      promote_resource_attributes:
+        - k8s.namespace.name
+        - k8s.deployment.name
+        - k8s.pod.name
+    scrape_configs:
+      # 順便抓 gateway collector 自身的 internal metrics
+      #（8888 是 operator 自動建立的 <name>-collector-monitoring service）
+      - job_name: otel-gateway-internal
+        static_configs:
+          - targets: ["gateway-collector-monitoring.otel-lab.svc.cluster.local:8888"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: otel-lab
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      securityContext:
+        fsGroup: 65534              # prom image 以 nobody 執行
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.5.0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --web.enable-otlp-receiver   # ★ 沒有這個 flag，/api/v1/otlp 會 404
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: otel-lab
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+---
+# ---------- Grafana（UI；lab 免登入：匿名 Admin，生產環境絕對不要這樣）----------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: otel-lab
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus.otel-lab.svc.cluster.local:9090
+        isDefault: true
+      - name: Tempo
+        type: tempo
+        access: proxy
+        url: http://tempo.otel-lab.svc.cluster.local:3200
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: otel-lab
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.0.2
+          env:
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: "Admin"
+            - name: GF_AUTH_DISABLE_LOGIN_FORM
+              value: "true"
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: otel-lab
+spec:
+  selector:
+    app: grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000

@@ -163,6 +163,7 @@ annotation resource.opentelemetry.io/service.name
 | Stage 5 | [05-opamp-bridge-control-plane.md](./05-opamp-bridge-control-plane.md) | 用 **OpAMP Bridge**（repo 內建的 Go server）遠端管理 Operator 建立的 collector | 需求 5 |
 | Stage 6（延伸） | [06-opamp-remote-version-upgrade.md](./06-opamp-remote-version-upgrade.md) | 透過 OpAMP RemoteConfig **遠端下推 collector 版本升級**（改 `spec.image`），不用 `kubectl apply` | 需求 5 延伸 |
 | Stage 7（延伸） | [07-team-scoped-attributes.md](./07-team-scoped-attributes.md) | 幫 order-service 的 sidecar 加業務 attributes（`attributes` + `transform`/OTTL processor），並驗證 payment-service 完全不受影響 | 業務單位客製化屬性、CR 隔離範疇 |
+| Stage 8（延伸） | [08-observability-backends.md](./08-observability-backends.md) | 部署 **Grafana + Tempo + Prometheus**，gateway 出口改接真後端；用 before/after 重播親眼驗證「無 OTel 服務 → 加 annotation → signal 出現在 Grafana」 | 端到端驗證、分享 demo |
 
 每個階段結尾都有「驗證」與「練習」，跟 classroom 章節同樣格式。
 
@@ -233,6 +234,8 @@ classroom/lab/
     ├── 40-opampbridge.yaml            ← Stage 5/6（Stage 6 沿用同一份 manifest，多開 admin port）
     ├── 50-order-sidecar-attributes.yaml    ← Stage 7：order team 專屬 sidecar CR（attributes + OTTL）
     ├── 51-order-service-team-sidecar.yaml  ← Stage 7：order-service 改指向 order-sidecar
+    ├── 70-observability-backend.yaml       ← Stage 8：Tempo + Prometheus + Grafana（lab 級最小部署）
+    ├── 71-collector-gateway-backends.yaml  ← Stage 8：gateway 出口改接 Tempo/Prometheus（debug 保留）
     ├── 60-example-llm-guard-api-operator.yaml      ← 真實案例參考：把公司服務 llm-guard-api
     │                                                  現有的手動 sidecar+env 改寫成 Instrumentation
     │                                                  + sidecar CR（不是 k3d lab 的一部分，不要 apply）

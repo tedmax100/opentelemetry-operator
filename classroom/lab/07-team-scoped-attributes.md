@@ -288,4 +288,5 @@ gwlogs 20s | grep -A12 'Name +: POST /pay' | grep -c 'team:'
 | | |
 |---|---|
 | 上一步 | [← Stage 6](./06-opamp-remote-version-upgrade.md) |
+| 下一步 | [Stage 8：接上 Grafana + Tempo + Prometheus →](./08-observability-backends.md) |
 | 回到 | [README](./README.md) |

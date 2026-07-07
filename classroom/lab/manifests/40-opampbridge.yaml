@@ -107,3 +107,6 @@ spec:
       - debug
       - otlp
       - load_balancing
+      # Stage 8 之後 gateway 用 otlphttp 送 Prometheus；白名單是 type 層級的，
+      # 沒加這行的話，Stage 6 的遠端下推會被 bridge 以「不允許的元件」拒絕。
+      - otlphttp
