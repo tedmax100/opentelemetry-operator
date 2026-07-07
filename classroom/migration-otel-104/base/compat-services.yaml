@@ -1,0 +1,104 @@
+# 舊名 Service alias:operator 產的 Service 叫 <name>-collector(如 collector-collector),
+# 這裡以舊名建立 Service、selector 指向 operator 管的 pods,讓:
+#   1. 應用程式端的 OTLP endpoint(collector.open-telemetry:4317 等)不用改;
+#   2. span-lb / metrics-lb 的 k8s resolver 設定不用改。
+# 注意:切換期間舊 helm 部署仍在時「同名 Service 會衝突」,必須先移除舊 release 再 apply,
+#       或先用新名切應用、確認後刪掉本檔。
+#
+# selector 用 operator 打在 pod 上的固定 label:
+#   app.kubernetes.io/instance = <namespace>.<CR 名>
+apiVersion: v1
+kind: Service
+metadata:
+  name: collector
+  namespace: open-telemetry
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/managed-by: opentelemetry-operator
+    app.kubernetes.io/component: opentelemetry-collector
+    app.kubernetes.io/instance: open-telemetry.collector
+  ports:
+    - name: otlp
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+      appProtocol: grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+    - name: prometheus
+      port: 8889
+      targetPort: 8889
+      protocol: TCP
+    - name: metrics
+      port: 8888
+      targetPort: 8888
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: span-lb
+  namespace: open-telemetry
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/managed-by: opentelemetry-operator
+    app.kubernetes.io/component: opentelemetry-collector
+    app.kubernetes.io/instance: open-telemetry.span-lb
+  ports:
+    - name: otlp
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+      appProtocol: grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: span-collector
+  namespace: open-telemetry
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/managed-by: opentelemetry-operator
+    app.kubernetes.io/component: opentelemetry-collector
+    app.kubernetes.io/instance: open-telemetry.span-collector
+  ports:
+    - name: otlp
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+      appProtocol: grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: metrics-lb
+  namespace: open-telemetry
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/managed-by: opentelemetry-operator
+    app.kubernetes.io/component: opentelemetry-collector
+    app.kubernetes.io/instance: open-telemetry.metrics-lb
+  ports:
+    - name: otlp
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+      appProtocol: grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP

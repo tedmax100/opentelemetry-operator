@@ -1,0 +1,48 @@
+# lab-cluster overlay:對照現行 overlays/lab-env/lab-cluster/kustomization.yaml。
+# 差別:現在 patch 的對象是 CR 本身(spec.env / spec.resources / spec.autoscaler),
+#       而不是 render 出來的 Deployment / HPA / ConfigMap —— 一個 patch 打一個來源。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - ingress-grpc.yaml
+patches:
+  # lab 全採樣 + 縮小資源(原本是 patch Deployment env/resources + HPA minReplicas 三處)
+  - target:
+      group: opentelemetry.io
+      version: v1beta1
+      kind: OpenTelemetryCollector
+      name: span-collector
+    patch: |-
+      # env 順序:0=MY_POD_IP, 1=GOMEMLIMIT, 2=TAIL_SAMPLING_PERCENTAGE
+      - op: replace
+        path: /spec/env/2/value
+        value: "100"
+      # 512Mi * 0.8 = 409MiB
+      - op: replace
+        path: /spec/env/1/value
+        value: "409MiB"
+      - op: replace
+        path: /spec/resources/limits/memory
+        value: 512Mi
+      - op: replace
+        path: /spec/resources/requests/memory
+        value: 256Mi
+      - op: replace
+        path: /spec/autoscaler/minReplicas
+        value: 1
+  - target:
+      group: opentelemetry.io
+      version: v1beta1
+      kind: OpenTelemetryCollector
+      name: span-lb
+    patch: |-
+      - op: replace
+        path: /spec/env/1/value
+        value: "409MiB"
+      - op: replace
+        path: /spec/resources/limits/memory
+        value: 512Mi
+      - op: replace
+        path: /spec/resources/requests/memory
+        value: 256Mi

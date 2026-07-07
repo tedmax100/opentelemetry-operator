@@ -1,0 +1,9 @@
+apiVersion: v2
+name: otel-collector-cr
+description: |
+  Thin wrapper chart:把 values 灌進 OpenTelemetryCollector CR 骨架,
+  並補上 operator 不代勞的部分(SA + pull secret、resolver RBAC、
+  客製 ServiceMonitor、Ingress、GOMEMLIMIT 計算)。
+  workload(Deployment/Service/ConfigMap/HPA)由 operator 從 CR 生成,本 chart 不產。
+type: application
+version: 0.1.0

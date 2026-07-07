@@ -1,0 +1,62 @@
+# chart 層級的共用預設值,四隻 collector 的 values 檔只放各自的決策。
+# 每隻 collector 必填:name、image、resources、config
+
+name: ""
+image: ""
+mode: deployment
+imagePullPolicy: IfNotPresent
+
+# 自訂 distro、版本自己控,不讓 operator 隨自身升級改寫 CR config
+upgradeStrategy: none
+
+# CR 沒有 imagePullSecrets 欄位 → chart 生自訂 SA 掛上,CR 指過去
+imagePullSecret: image-pull-secret
+
+# 對齊原 chart 的 useGOMEMLIMIT:自動算 resources.limits.memory 的 80%
+useGOMEMLIMIT: true
+
+# loadbalancing exporter 的 k8s resolver 需要 endpoints/endpointslices RBAC
+# (operator 不會為 loadbalancing exporter 產 RBAC)
+resolverRBAC: false
+
+# 額外 env(如 TAIL_SAMPLING_PERCENTAGE);MY_POD_IP 和 GOMEMLIMIT 由 chart 自動注入
+extraEnvs: []
+
+resources: {}
+autoscaler: {}
+
+# 預設用 operator 的 enableMetrics 生 self-telemetry ServiceMonitor(8888)。
+# 若需要客製 interval/relabelings(operator 做不到),開這個 block:
+# chart 會改為手寫兩個 ServiceMonitor(monitoring 8888 + exporter port),
+# 並自動把 CR 的 enableMetrics 關掉,避免重複抓取。
+appMetricsServiceMonitor:
+  enabled: false
+  # port: prometheus
+  # interval: 60s
+  # scrapeTimeout: 50s
+  # relabelings: []
+
+# operator 的 spec.ingress 會把路徑變 /<port名>,不合用,ingress 由 chart 生
+ingresses: []
+# - name: http
+#   host: k8s-otel-collector-lab.104dc-dev.com
+#   port: 4318
+# - name: grpc
+#   host: otel-collector.apps.k8s.104dc-dev.com
+#   port: 4317
+#   ingressClassName: nginx
+#   annotations:
+#     nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+
+securityContext:
+  allowPrivilegeEscalation: false
+  privileged: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+
+# collector pipeline 設定,原 values 的 config 區塊原封不動搬過來
+config: {}

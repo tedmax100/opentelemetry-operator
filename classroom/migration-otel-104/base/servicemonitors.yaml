@@ -1,0 +1,44 @@
+# collector(metrics 中央)的兩個抓取端點手寫維護:
+#   - 8888 self-telemetry:operator enableMetrics 也能生,但為了跟 8889 一起管,統一手寫
+#   - 8889 prometheus exporter:需要 60s interval + labeldrop relabelings,
+#     operator 生的 ServiceMonitor「不支援」自訂 interval/relabelings,只能手寫
+# selector 對準 operator 產的 Service:
+#   operator.opentelemetry.io/collector-service-type: base(主 Service,含 8889)
+#   operator.opentelemetry.io/collector-service-type: monitoring(<name>-collector-monitoring,8888)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: collector-self-telemetry
+  namespace: open-telemetry
+spec:
+  namespaceSelector:
+    matchNames:
+      - open-telemetry
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: open-telemetry.collector
+      operator.opentelemetry.io/collector-service-type: monitoring
+  endpoints:
+    - port: monitoring   # operator monitoring service 的 port 名稱固定為 monitoring(8888)
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: collector-app-metrics
+  namespace: open-telemetry
+spec:
+  namespaceSelector:
+    matchNames:
+      - open-telemetry
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: open-telemetry.collector
+      operator.opentelemetry.io/collector-service-type: base
+  endpoints:
+    - port: prometheus
+      interval: 60s      # 應用程式每 60 秒才會送一次 metrics
+      scrapeTimeout: 50s
+      relabelings:
+        - regex: (container|endpoint|pod|namespace|service)
+          action: labeldrop
+      # Remain `instance` label to recognize scraping from which collector

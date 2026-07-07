@@ -1,0 +1,136 @@
+# traces 的 tail sampling 層(原 helm release: span-collector)
+# 對照來源:k8s-gitops-infra-rancher/apps/open-telemetry/base/span-collector/span-collector.gen.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: span-collector     # 產出資源名為 span-collector-collector
+  namespace: open-telemetry
+spec:
+  mode: deployment
+  image: ghcr.io/104corp/otel-collector/collector:0.110.0
+  imagePullPolicy: IfNotPresent
+  upgradeStrategy: none
+  serviceAccount: span-collector-sa
+
+  env:
+    - name: MY_POD_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.podIP
+    # 1.5Gi * 0.8 = 1228MiB
+    - name: GOMEMLIMIT
+      value: "1228MiB"
+    # 各環境覆寫:lab=100、stg/prod=1(見 overlays/)
+    - name: TAIL_SAMPLING_PERCENTAGE
+      value: "1"
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: "1"          # higher limit to avoid throttling
+      memory: 1.5Gi
+
+  autoscaler:
+    minReplicas: 8
+    maxReplicas: 12
+    targetCPUUtilization: 300    # 250m * 300% = 1000m * 80%
+    targetMemoryUtilization: 100 # 1Gi
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    privileged: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 10001
+
+  observability:
+    metrics:
+      enableMetrics: true
+
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: ${env:MY_POD_IP}:4317
+            keepalive:
+              server_parameters:
+                max_connection_idle: 30m
+          http:
+            endpoint: ${env:MY_POD_IP}:4318
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 90
+        spike_limit_percentage: 25
+      tail_sampling:
+        # 假設全公司高峰 10,000 req/s,30s 內 300,000 req,最少 4 replica → 每台 75,000
+        decision_wait: 30s
+        num_traces: 75000
+        expected_new_traces_per_sec: 2500
+        decision_cache:
+          sampled_cache_size: 100000
+        # 採樣策略:>3s 的請求、錯誤的請求、百分之 ${TAIL_SAMPLING_PERCENTAGE} 的請求
+        policies:
+          - name: always-when-above-3s
+            type: latency
+            latency:
+              threshold_ms: 3000
+          - name: always-when-error
+            type: status_code
+            status_code:
+              status_codes:
+                - ERROR
+          - name: sample-rate
+            type: probabilistic
+            probabilistic:
+              sampling_percentage: ${env:TAIL_SAMPLING_PERCENTAGE}
+      batch: {}
+    exporters:
+      loadbalancing:
+        routing_key: traceID
+        protocol:
+          otlp:
+            timeout: 3s
+            tls:
+              insecure: true
+        resolver:
+          k8s:
+            # tempo 是外部 namespace 的服務,名稱不受本次遷移影響
+            service: tempo-distributor.tracing
+            ports:
+              - 4317
+            timeout: 1s
+      # 備用直連(未接進 pipeline,維持與現況一致)
+      otlp/tempo:
+        endpoint: tempo-distributor.tracing.svc.cluster.local:4317
+        timeout: 5s
+        tls:
+          insecure: true
+      debug:
+        verbosity: normal
+    extensions:
+      health_check:
+        endpoint: ${env:MY_POD_IP}:13133
+    service:
+      telemetry:
+        metrics:
+          address: ${env:MY_POD_IP}:8888
+      extensions:
+        - health_check
+      pipelines:
+        traces:
+          receivers:
+            - otlp
+          processors:
+            - memory_limiter
+            - tail_sampling
+            # batch must be after sampling
+            - batch
+          exporters:
+            - loadbalancing

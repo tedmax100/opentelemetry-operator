@@ -1,0 +1,44 @@
+# gRPC ingress(對照現行 lab-cluster/ingress.yaml),backend 改指 operator 產的 Service
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: span-lb-grpc
+  namespace: open-telemetry
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: otel-span-lb.apps.k8s.104dc-dev.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: span-lb-collector
+                port:
+                  number: 4317
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: collector-grpc
+  namespace: open-telemetry
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: otel-collector.apps.k8s.104dc-dev.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: collector-collector
+                port:
+                  number: 4317

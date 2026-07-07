@@ -1,0 +1,107 @@
+# traces 的 tail sampling 層(對照 base/span-collector/span-collector.gen.yaml)
+name: span-collector
+image: ghcr.io/104corp/otel-collector/collector:0.110.0
+
+resolverRBAC: true
+
+extraEnvs:
+  # 各環境 overlay values 覆寫:lab=100、stg/prod=1
+  - name: TAIL_SAMPLING_PERCENTAGE
+    value: "1"
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    cpu: "1"        # higher limit to avoid throttling
+    memory: 1.5Gi   # GOMEMLIMIT = 1228MiB
+
+autoscaler:
+  minReplicas: 8
+  maxReplicas: 12
+  targetCPUUtilization: 300    # 250m * 300% = 1000m * 80%
+  targetMemoryUtilization: 100 # 1Gi
+
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: ${env:MY_POD_IP}:4317
+          keepalive:
+            server_parameters:
+              max_connection_idle: 30m
+        http:
+          endpoint: ${env:MY_POD_IP}:4318
+  processors:
+    memory_limiter:
+      check_interval: 5s
+      limit_percentage: 90
+      spike_limit_percentage: 25
+    tail_sampling:
+      # 假設全公司高峰 10,000 req/s,30s 內 300,000 req,最少 4 replica → 每台 75,000
+      decision_wait: 30s
+      num_traces: 75000
+      expected_new_traces_per_sec: 2500
+      decision_cache:
+        sampled_cache_size: 100000
+      # 採樣策略:>3s 的請求、錯誤的請求、百分之 ${TAIL_SAMPLING_PERCENTAGE} 的請求
+      policies:
+        - name: always-when-above-3s
+          type: latency
+          latency:
+            threshold_ms: 3000
+        - name: always-when-error
+          type: status_code
+          status_code:
+            status_codes:
+              - ERROR
+        - name: sample-rate
+          type: probabilistic
+          probabilistic:
+            sampling_percentage: ${env:TAIL_SAMPLING_PERCENTAGE}
+    batch: {}
+  exporters:
+    loadbalancing:
+      routing_key: traceID
+      protocol:
+        otlp:
+          timeout: 3s
+          tls:
+            insecure: true
+      resolver:
+        k8s:
+          # tempo 是外部 namespace 的服務,不受遷移影響
+          service: tempo-distributor.tracing
+          ports:
+            - 4317
+          timeout: 1s
+    # 備用直連(未接進 pipeline,維持與現況一致)
+    otlp/tempo:
+      endpoint: tempo-distributor.tracing.svc.cluster.local:4317
+      timeout: 5s
+      tls:
+        insecure: true
+    debug:
+      verbosity: normal
+  extensions:
+    health_check:
+      endpoint: ${env:MY_POD_IP}:13133
+  service:
+    telemetry:
+      metrics:
+        address: ${env:MY_POD_IP}:8888
+    extensions:
+      - health_check
+    pipelines:
+      traces:
+        receivers:
+          - otlp
+        processors:
+          - memory_limiter
+          - tail_sampling
+          # batch must be after sampling
+          - batch
+        exporters:
+          - loadbalancing

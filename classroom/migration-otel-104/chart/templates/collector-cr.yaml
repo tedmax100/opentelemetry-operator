@@ -1,0 +1,40 @@
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ required "name is required" .Values.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "otelcr.labels" . | nindent 4 }}
+spec:
+  mode: {{ .Values.mode }}
+  image: {{ required "image is required" .Values.image }}
+  imagePullPolicy: {{ .Values.imagePullPolicy }}
+  upgradeStrategy: {{ .Values.upgradeStrategy }}
+  serviceAccount: {{ .Values.name }}-sa
+  env:
+    # operator 不會自動注入 MY_POD_IP(原 chart 會),config 內 ${env:MY_POD_IP} 依賴它
+    - name: MY_POD_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.podIP
+    {{- if .Values.useGOMEMLIMIT }}
+    - name: GOMEMLIMIT
+      value: {{ include "otelcr.gomemlimit" . | quote }}
+    {{- end }}
+    {{- with .Values.extraEnvs }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  resources:
+    {{- toYaml (required "resources is required (GOMEMLIMIT/memory_limiter 依賴 limits)" .Values.resources) | nindent 4 }}
+  {{- with .Values.autoscaler }}
+  autoscaler:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  securityContext:
+    {{- toYaml .Values.securityContext | nindent 4 }}
+  observability:
+    metrics:
+      # 有客製 ServiceMonitor 時關掉 operator 的自動生成,避免同一個 port 被抓兩次
+      enableMetrics: {{ not .Values.appMetricsServiceMonitor.enabled }}
+  config:
+    {{- toYaml (required "config is required" .Values.config) | nindent 4 }}

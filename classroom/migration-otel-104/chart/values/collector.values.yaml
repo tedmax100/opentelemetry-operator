@@ -1,0 +1,92 @@
+# metrics 中央 collector(對照 base/collector.gen.yaml 的實際部署設定)
+name: collector
+image: ghcr.io/104corp/otel-collector/collector:0.112.0
+
+resources:
+  requests:
+    cpu: 256m
+    memory: 512Mi
+  limits:
+    cpu: 512m
+    memory: 512Mi   # GOMEMLIMIT 由 chart 自動算 80% = 409MiB
+
+autoscaler:
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilization: 140   # 256m * 140% = 512m * 70%
+  targetMemoryUtilization: 80
+
+# 8889 需要 60s interval + labeldrop,operator 生不出來,由 chart 手寫兩個 SM
+appMetricsServiceMonitor:
+  enabled: true
+  port: prometheus
+  interval: 60s        # 應用程式每 60 秒才會送一次 metrics
+  scrapeTimeout: 50s
+  relabelings:
+    - regex: (container|endpoint|pod|namespace|service)
+      action: labeldrop
+
+ingresses:
+  - name: http
+    host: k8s-otel-collector-lab.104dc-dev.com   # 各環境 overlay values 覆寫
+    port: 4318
+
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: ${env:MY_POD_IP}:4317
+          keepalive:
+            server_parameters:
+              max_connection_idle: 30m
+        http:
+          endpoint: ${env:MY_POD_IP}:4318
+  processors:
+    memory_limiter:
+      check_interval: 5s
+      limit_percentage: 80
+      spike_limit_percentage: 25
+    deltatocumulative:
+      max_stale: 2m
+    batch:
+      timeout: 2s
+      send_batch_size: 8192
+      send_batch_max_size: 10240
+  connectors:
+    # 104corp 自訂 connector(目前未接進 pipeline,維持與現況一致)
+    cumulative:
+      resource_key: cumulative
+      resource_value: "1"
+      metric_expiration: 10m
+      resource_to_telemetry:
+        enabled: true
+  exporters:
+    prometheus:
+      endpoint: ${env:MY_POD_IP}:8889
+      namespace: app
+      metric_expiration: 10m
+      add_metric_suffixes: true
+      resource_to_telemetry_conversion:
+        enabled: true
+    debug:
+      verbosity: detailed
+  extensions:
+    health_check:
+      endpoint: ${env:MY_POD_IP}:13133
+  service:
+    telemetry:
+      metrics:
+        address: ${env:MY_POD_IP}:8888
+    extensions:
+      - health_check
+    pipelines:
+      metrics:
+        receivers:
+          - otlp
+        processors:
+          - memory_limiter
+          - deltatocumulative
+          - batch
+        exporters:
+          - prometheus

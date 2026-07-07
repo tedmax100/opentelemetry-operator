@@ -1,0 +1,52 @@
+{{- if .Values.appMetricsServiceMonitor.enabled }}
+{{- $sm := .Values.appMetricsServiceMonitor }}
+# 需要客製 interval/relabelings 時走這裡(operator 的 enableMetrics 不支援),
+# CR 端的 enableMetrics 會被自動關掉(見 collector-cr.yaml),兩個 SM 都由 chart 生:
+# 1) self-telemetry(8888):對準 operator 產的 <name>-collector-monitoring service
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.name }}-self-telemetry
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "otelcr.labels" . | nindent 4 }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Namespace }}.{{ .Values.name }}
+      operator.opentelemetry.io/collector-service-type: monitoring
+  endpoints:
+    - port: monitoring
+---
+# 2) exporter port(如 prometheus 8889):對準 operator 產的主 service(base)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.name }}-app-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "otelcr.labels" . | nindent 4 }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Namespace }}.{{ .Values.name }}
+      operator.opentelemetry.io/collector-service-type: base
+  endpoints:
+    - port: {{ $sm.port | default "prometheus" }}
+      {{- with $sm.interval }}
+      interval: {{ . }}
+      {{- end }}
+      {{- with $sm.scrapeTimeout }}
+      scrapeTimeout: {{ . }}
+      {{- end }}
+      {{- with $sm.relabelings }}
+      relabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

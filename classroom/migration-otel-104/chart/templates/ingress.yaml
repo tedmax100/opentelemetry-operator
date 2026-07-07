@@ -1,0 +1,31 @@
+{{- range .Values.ingresses }}
+# operator 的 spec.ingress(path 型)會生 /<port名> 路徑,改變對外 URL,故由 chart 生;
+# backend 指向 operator 產的主 Service:<name>-collector
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $.Values.name }}-{{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "otelcr.labels" $ | nindent 4 }}
+  {{- with .annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .ingressClassName }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  rules:
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: {{ .pathType | default "ImplementationSpecific" }}
+            backend:
+              service:
+                name: {{ $.Values.name }}-collector
+                port:
+                  number: {{ .port }}
+{{- end }}

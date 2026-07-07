@@ -1,0 +1,41 @@
+{{- if .Values.resolverRBAC }}
+# loadbalancing exporter 的 k8s resolver 需要 list/watch endpoints,
+# operator 不會為它自動產 RBAC(對照原 chart 的 clusterRole.create)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Namespace }}-{{ .Values.name }}-endpoints-resolver
+  labels:
+    {{- include "otelcr.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - endpoints
+    verbs:
+      - list
+      - watch
+  # 0.14x 之後的 k8s resolver 改讀 EndpointSlices
+  - apiGroups:
+      - discovery.k8s.io
+    resources:
+      - endpointslices
+    verbs:
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Namespace }}-{{ .Values.name }}-endpoints-resolver
+  labels:
+    {{- include "otelcr.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Namespace }}-{{ .Values.name }}-endpoints-resolver
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.name }}-sa
+    namespace: {{ .Release.Namespace }}
+{{- end }}

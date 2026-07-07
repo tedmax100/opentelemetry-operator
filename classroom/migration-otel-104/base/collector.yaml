@@ -1,0 +1,122 @@
+# metrics 中央 collector(原 helm release: collector)
+# 對照來源:k8s-gitops-infra-rancher/apps/open-telemetry/base/collector.gen.yaml
+# 注意:collector.values.yaml 與 gen 檔已不同步(batch 調參、deltatocumulative max_stale、
+#       pipeline 順序都只存在 gen 檔),此處以「實際部署的 gen 檔」為準。
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: collector          # operator 產出資源名為 <name>-collector,即 collector-collector
+  namespace: open-telemetry
+spec:
+  mode: deployment
+  # 自訂 distro(含 cumulative connector)
+  image: ghcr.io/104corp/otel-collector/collector:0.112.0
+  imagePullPolicy: IfNotPresent
+  # 用自訂 image、版本自己控,不讓 operator 隨自身升級改寫 CR
+  upgradeStrategy: none
+  # CR 沒有 imagePullSecrets 欄位,pull secret 掛在自訂 SA 上(見 rbac.yaml)
+  serviceAccount: collector-sa
+
+  env:
+    # operator 不會自動注入 MY_POD_IP(chart 會),config 內 ${env:MY_POD_IP} 依賴它
+    - name: MY_POD_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.podIP
+    # chart 的 useGOMEMLIMIT 自動算 80% memory limit,operator 不會,這裡寫死
+    # 512Mi * 0.8 = 409MiB
+    - name: GOMEMLIMIT
+      value: "409MiB"
+
+  resources:
+    requests:
+      cpu: 256m
+      memory: 512Mi
+    limits:
+      cpu: 512m
+      memory: 512Mi
+
+  autoscaler:
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilization: 140   # 256m * 140% = 512m * 70%
+    targetMemoryUtilization: 80
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    privileged: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 10001
+
+  observability:
+    metrics:
+      # 8889 需要自訂 interval + relabelings,operator 生的 ServiceMonitor 做不到,
+      # 因此關掉,8888/8889 都改用手寫的 servicemonitors.yaml
+      enableMetrics: false
+
+  # 以下即原本 ConfigMap 的 relay 內容。operator 會:
+  # 1. apply 時驗證結構;2. 從 receivers/exporters 自動推導 Service ports
+  #    (otlp 4317 / otlp-http 4318 / prometheus 8889);3. config 變更自動滾動重啟
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: ${env:MY_POD_IP}:4317
+            keepalive:
+              server_parameters:
+                max_connection_idle: 30m
+          http:
+            endpoint: ${env:MY_POD_IP}:4318
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+      deltatocumulative:
+        max_stale: 2m
+      batch:
+        timeout: 2s
+        send_batch_size: 8192
+        send_batch_max_size: 10240
+    connectors:
+      # 104corp 自訂 connector(目前未接進 pipeline,維持與現況一致)
+      cumulative:
+        resource_key: cumulative
+        resource_value: "1"
+        metric_expiration: 10m
+        resource_to_telemetry:
+          enabled: true
+    exporters:
+      prometheus:
+        endpoint: ${env:MY_POD_IP}:8889
+        namespace: app
+        metric_expiration: 10m
+        add_metric_suffixes: true
+        resource_to_telemetry_conversion:
+          enabled: true
+      debug:
+        verbosity: detailed
+    extensions:
+      health_check:
+        endpoint: ${env:MY_POD_IP}:13133
+    service:
+      telemetry:
+        metrics:
+          address: ${env:MY_POD_IP}:8888
+      extensions:
+        - health_check
+      pipelines:
+        metrics:
+          receivers:
+            - otlp
+          processors:
+            - memory_limiter
+            - deltatocumulative
+            - batch
+          exporters:
+            - prometheus

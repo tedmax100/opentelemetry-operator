@@ -1,0 +1,103 @@
+# traces 的 LB 層(原 helm release: span-lb)
+# 對照來源:k8s-gitops-infra-rancher/apps/open-telemetry/base/span-lb.gen.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: span-lb            # 產出資源名為 span-lb-collector
+  namespace: open-telemetry
+spec:
+  mode: deployment
+  image: ghcr.io/104corp/otel-collector/collector:0.110.0
+  imagePullPolicy: IfNotPresent
+  upgradeStrategy: none
+  # 這個 SA 綁了 endpoints/endpointslices 的 ClusterRole(k8s resolver 需要,見 rbac.yaml)
+  serviceAccount: span-lb-sa
+
+  env:
+    - name: MY_POD_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.podIP
+    # 1Gi * 0.8 = 819MiB
+    - name: GOMEMLIMIT
+      value: "819MiB"
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+  autoscaler:
+    minReplicas: 4
+    maxReplicas: 10
+    targetCPUUtilization: 280   # 250m * 280% = 1000m * 70%
+    targetMemoryUtilization: 80
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    privileged: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 10001
+
+  observability:
+    metrics:
+      # 只需要 8888 self-telemetry,operator 會自動建 ServiceMonitor(選 -monitoring service)
+      enableMetrics: true
+
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: ${env:MY_POD_IP}:4317
+          http:
+            endpoint: ${env:MY_POD_IP}:4318
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+      batch: {}
+    exporters:
+      loadbalancing:
+        routing_key: traceID
+        protocol:
+          otlp:
+            timeout: 3s
+            tls:
+              insecure: true
+        resolver:
+          k8s:
+            # 指向 compat-services.yaml 提供的舊名 alias Service,
+            # 應用端與這裡都不用改名。若之後棄用 alias,改為 span-collector-collector.open-telemetry
+            service: span-collector.open-telemetry
+            ports:
+              - 4317
+            timeout: 1s
+      debug:
+        verbosity: normal
+    extensions:
+      health_check:
+        endpoint: ${env:MY_POD_IP}:13133
+    service:
+      telemetry:
+        metrics:
+          address: ${env:MY_POD_IP}:8888
+      extensions:
+        - health_check
+      pipelines:
+        traces:
+          receivers:
+            - otlp
+          processors:
+            - memory_limiter
+            - batch
+          exporters:
+            - loadbalancing

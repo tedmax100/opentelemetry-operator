@@ -1,0 +1,75 @@
+# CR 沒有 imagePullSecrets 欄位 → 私有 registry 的 pull secret 掛在自訂 SA 上,
+# CR 用 spec.serviceAccount 指過來(operator 就不會自建 SA)。
+# k8s resolver(loadbalancing exporter)需要 endpoints/endpointslices 的 list/watch,
+# operator 不會為 loadbalancing exporter 自動產 RBAC,維持手寫。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: collector-sa
+  namespace: open-telemetry
+imagePullSecrets:
+  - name: image-pull-secret
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: span-lb-sa
+  namespace: open-telemetry
+imagePullSecrets:
+  - name: image-pull-secret
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: span-collector-sa
+  namespace: open-telemetry
+imagePullSecrets:
+  - name: image-pull-secret
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: metrics-lb-sa
+  namespace: open-telemetry
+imagePullSecrets:
+  - name: image-pull-secret
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: open-telemetry-lb-endpoints-resolver
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - endpoints
+    verbs:
+      - list
+      - watch
+  # 0.14x 之後的 k8s resolver 改讀 EndpointSlices
+  - apiGroups:
+      - discovery.k8s.io
+    resources:
+      - endpointslices
+    verbs:
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: open-telemetry-lb-endpoints-resolver
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: open-telemetry-lb-endpoints-resolver
+subjects:
+  - kind: ServiceAccount
+    name: span-lb-sa
+    namespace: open-telemetry
+  - kind: ServiceAccount
+    name: span-collector-sa
+    namespace: open-telemetry
+  - kind: ServiceAccount
+    name: metrics-lb-sa
+    namespace: open-telemetry

@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+commonAnnotations:
+  corp104.com/business-unit: "資訊服務事業體-技術策略部"
+  corp104.com/product-no: P0059
+resources:
+  - rbac.yaml
+  - collector.yaml
+  - span-lb.yaml
+  - span-collector.yaml
+  - metrics-lb.yaml
+  - compat-services.yaml
+  - servicemonitors.yaml
+  - ingress.yaml

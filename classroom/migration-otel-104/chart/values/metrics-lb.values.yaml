@@ -1,0 +1,89 @@
+# metrics 的一致性路由層(對照 overlays/lab-env/lab-cluster/metrics-lb.gen.yaml)
+# 讓同一條 metric stream 永遠落到同一台中央 collector,
+# 解決 series 重複與 deltatocumulative 被切碎算錯的問題。
+name: metrics-lb
+# 注意:contrib 版 image,與其他三隻不同;operator 不覆寫 command,
+# 需確認 image ENTRYPOINT 即 otelcol-contrib
+image: ghcr.io/104corp/otel-collector/collector-contrib:0.142.0
+
+resolverRBAC: true
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi     # GOMEMLIMIT = 819MiB
+
+autoscaler:
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilization: 280   # 250m * 280% = 1000 * 70%
+  targetMemoryUtilization: 80
+
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: ${env:MY_POD_IP}:4317
+        http:
+          endpoint: ${env:MY_POD_IP}:4318
+  processors:
+    memory_limiter:
+      check_interval: 5s
+      limit_percentage: 80
+      spike_limit_percentage: 25
+    batch: {}
+  exporters:
+    loadbalancing:
+      routing_key: streamID
+      sending_queue:
+        enabled: true
+        queue_size: 500
+        num_consumers: 4
+      retry_on_failure:
+        enabled: true
+        initial_interval: 1s
+        max_interval: 5s
+        max_elapsed_time: 30s
+      timeout: 5s
+      protocol:
+        otlp:
+          timeout: 3s
+          tls:
+            insecure: true
+      resolver:
+        k8s:
+          # 舊名 alias;棄用 alias 後改 collector-collector.open-telemetry
+          service: collector.open-telemetry
+          ports:
+            - 4317
+          timeout: 1s
+    debug:
+      verbosity: normal
+  extensions:
+    health_check:
+      endpoint: ${env:MY_POD_IP}:13133
+  service:
+    telemetry:
+      metrics:
+        # 0.14x 新版 telemetry 語法,operator 能解析並照樣建 monitoring service
+        readers:
+          - pull:
+              exporter:
+                prometheus:
+                  host: ${env:MY_POD_IP}
+                  port: 8888
+    extensions:
+      - health_check
+    pipelines:
+      metrics:
+        receivers:
+          - otlp
+        processors:
+          - memory_limiter
+          - batch
+        exporters:
+          - loadbalancing

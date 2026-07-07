@@ -1,0 +1,40 @@
+# Ingress 手寫維護,不用 CR 的 spec.ingress。
+# 原因:operator 的 path 型 ingress 會為每個 port 生 /<port 名> 的路徑(如 /otlp-http),
+#       而現況是 host 根路徑 / 直通 4318,client 打 https://host/v1/traces,
+#       用 spec.ingress 會改變對外 URL,直接沿用手寫比較安全。
+# backend 指向 operator 產的 Service(<CR 名>-collector)。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: collector
+  namespace: open-telemetry
+spec:
+  rules:
+    - host: k8s-otel-collector-lab.104dc-dev.com   # 各環境 overlay 覆寫
+      http:
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: collector-collector
+                port:
+                  number: 4318
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: span-lb
+  namespace: open-telemetry
+spec:
+  rules:
+    - host: k8s-otel-span-lb-lab.104dc-dev.com     # 各環境 overlay 覆寫
+      http:
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: span-lb-collector
+                port:
+                  number: 4318
