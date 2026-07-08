@@ -99,19 +99,211 @@ configmap/gateway-collector-<hash>
 | `OpAMPBridge`（v1alpha1） | Collector 群的遠端控制面 | 代理「本 cluster 中 operator 管的 collector」給遠端 server，下推**回寫 CR**、滾動更新交回 operator | `l-`/`s-`/`p-` 多環境的控制面選項（§2.5） |
 | `TargetAllocator`（v1alpha1，可獨立或內嵌） | Prometheus scrape target 在多副本間的分配 | `prometheusCR.enabled` 直接認得 ServiceMonitor/PodMonitor | 我們現有的 serviceMonitors 資產（§2.5） |
 
-四個 CR 各自值得展開一句的地方：
+與其逐段貼型別定義，可配置面用三張 UML 看完（只畫治理相關欄位，類別名與 repo 內的 Go struct 一一對應；完整欄位見 [docs/api/](../docs/api/)）。
 
-**`OpenTelemetryCollector` 的 `spec.mode` 是整份 CR 最 load-bearing 的欄位**，它決定 operator 長出什麼資源、以及後面所有拓撲討論的語意：
+**UML 一：`OpenTelemetryCollector`——spec 分三層，`config` 是原生 collector 結構的透傳**
 
-```go
-// apis/v1beta1/mode.go:6-24
-ModeDeployment   // 一般 gateway
-ModeDaemonSet    // agent：每節點一份
-ModeStatefulSet  // tail sampling gateway：loadbalancing resolver 需要 headless service 的穩定 DNS
-ModeSidecar      // 不產生任何獨立 workload——變成範本，等 Pod 帶 sidecar annotation 時由 webhook 注入
+```mermaid
+classDiagram
+    direction LR
+
+    OpenTelemetryCollectorSpec --> Mode : 決定執行點
+    OpenTelemetryCollectorSpec *-- OpenTelemetryCommonFields : inline
+    OpenTelemetryCollectorSpec *-- StatefulSetCommonFields : inline
+    OpenTelemetryCollectorSpec *-- Config : 透傳・不翻譯
+    OpenTelemetryCollectorSpec *-- TargetAllocatorEmbedded
+    Config *-- Service
+    Service "1" *-- "N" Pipeline : traces・metrics・logs
+
+    class Mode {
+        <<enumeration>>
+        deployment
+        daemonset
+        statefulset
+        sidecar
+    }
+
+    class OpenTelemetryCollectorSpec {
+        mode : Mode
+        config : Config
+        managementState : ManagementStateType
+        upgradeStrategy : UpgradeStrategy
+        configVersions : int
+        autoscaler : AutoscalerSpec
+        targetAllocator : TargetAllocatorEmbedded
+        ingress : Ingress
+        networkPolicy : NetworkPolicy
+        livenessProbe : Probe
+        readinessProbe : Probe
+        startupProbe : Probe
+        observability : ObservabilitySpec
+        configmaps : ConfigMapsSpec[]
+    }
+
+    class OpenTelemetryCommonFields {
+        <<inline・所有 mode 通用>>
+        image : string
+        resources : ResourceRequirements
+        replicas : int32
+        env : EnvVar[]
+        envFrom : EnvFromSource[]
+        ports : PortsSpec[]
+        serviceAccount : string
+        podAnnotations : map
+        volumes volumeMounts
+        nodeSelector tolerations affinity
+        securityContext podSecurityContext
+        initContainers additionalContainers
+        topologySpreadConstraints
+        priorityClassName : string
+    }
+
+    class StatefulSetCommonFields {
+        <<inline・statefulset 專用>>
+        volumeClaimTemplates
+        persistentVolumeClaimRetentionPolicy
+        serviceName : string
+        podManagementPolicy
+    }
+
+    class Config {
+        <<原生 collector config・AnyConfig 透傳>>
+        receivers : AnyConfig
+        processors : AnyConfig
+        exporters : AnyConfig
+        connectors : AnyConfig
+        extensions : AnyConfig
+        service : Service
+    }
+
+    class Service {
+        extensions : string[]
+        telemetry : AnyConfig
+        pipelines : Map~string,Pipeline~
+    }
+
+    class Pipeline {
+        receivers : string[]
+        processors : string[]
+        exporters : string[]
+    }
 ```
 
-注意 `sidecar` mode 的特殊性：它讓同一個 CRD 同時活在**兩種執行點**（決策一）——前三種 mode 走 reconcile（即時收斂），sidecar mode 走 webhook（惰性生效）。同一個 Kind，政策生效語意取決於 mode，這是設計上最容易被誤解的地方。
+讀圖重點：
+
+- **spec 分三層**：CR 專屬欄位（mode、config、autoscaler…）、`OpenTelemetryCommonFields`（inline 進來的 workload 通用欄位——image、resources、env 都在這層，所以自建 image 與 `GOMEMLIMIT` 照掛）、`StatefulSetCommonFields`（只在 statefulset mode 有意義）。
+- **`Config` 的每個區段都是 `AnyConfig`（`map[string]any`）**——這就是決策三「透傳不翻譯」在型別層的長相：operator 不為任何 receiver/processor 建型別，schema 由 collector 自己驗。operator 只讀 `service.pipelines` 裡實際接線的元件來推導 Service port 與 RBAC。
+- **`mode` 是整份 CR 最 load-bearing 的欄位**：前三種 mode 走 reconcile（即時收斂），`sidecar` 不產生任何獨立 workload——CR 變成範本，等 Pod 帶 annotation 時由 webhook 注入。同一個 Kind 同時活在**兩種執行點**（決策一），政策生效語意取決於 mode，這是設計上最容易被誤解的地方。
+
+**UML 二：`Instrumentation`——平台欄位 + 七份語言區段，全是「要注入的值」而非 workload**
+
+```mermaid
+classDiagram
+    direction LR
+
+    InstrumentationSpec *-- Exporter
+    InstrumentationSpec *-- Sampler
+    InstrumentationSpec *-- Resource
+    InstrumentationSpec "1" *-- "7" LanguageSpec : java nodejs python dotnet go apacheHttpd nginx
+
+    class InstrumentationSpec {
+        <<純範本・不建立任何資源>>
+        exporter : Exporter
+        sampler : Sampler
+        propagators : Propagator[]
+        resource : Resource
+        defaults : Defaults
+        env : EnvVar[]
+        imagePullPolicy : PullPolicy
+        initContainerSecurityContext
+    }
+
+    class Exporter {
+        endpoint : string
+        tls : TLS
+    }
+
+    class Sampler {
+        type : SamplerType
+        argument : string
+    }
+
+    class Resource {
+        resourceAttributes : map
+        addK8sUIDAttributes : bool
+    }
+
+    class LanguageSpec {
+        <<各語言一份・結構相同>>
+        image : string
+        env : EnvVar[]
+        resources : ResourceRequirements
+        volumeClaimTemplate
+    }
+```
+
+讀圖重點：
+
+- 整份 spec 沒有一個欄位會長出 workload——全部是**待注入的 env 與 initContainer 描述**，這就是「純範本」的型別證據，也是它能放平台 namespace、業務唯讀的原因。
+- env 有四層優先序（型別註解明文寫死）：`container 原有 env` > `語言區段 env` > `共用 env` > `exporter/sampler 等欄位推導值`——§1.1 的 append-if-not-set 與所有漸進遷移論證都建立在這條上。
+- 語言區段只有七個，**沒有 `php`**（§1.3 的 `inject-sdk` 路線由此而來）；`go` 比別人多一個 `securityContext`（eBPF 需要 privileged）；`java` 多 `extensions`。
+- `exporter.endpoint` 是唯一決定「直送 or 走 sidecar」的欄位——§1.4 兩份 CR 的差異就這一格。
+
+**UML 三：`OpAMPBridge` 與 `TargetAllocator`（內嵌形式）——控制面與收編介面**
+
+```mermaid
+classDiagram
+    direction LR
+
+    TargetAllocatorEmbedded *-- TargetAllocatorPrometheusCR
+
+    class OpAMPBridgeSpec {
+        <<每 cluster 一個・replicas 上限 1>>
+        endpoint : string
+        headers : map
+        tls : OpAMPBridgeTLSConfig
+        capabilities : Map~Capability,bool~
+        componentsAllowed : Map~string,string[]~
+        description : AgentDescription
+        image resources 等部署欄位
+    }
+
+    class TargetAllocatorEmbedded {
+        <<內嵌於 collector spec>>
+        enabled : bool
+        allocationStrategy : AllocationStrategy
+        filterStrategy : FilterStrategy
+        prometheusCR : TargetAllocatorPrometheusCR
+        mtls : TargetAllocatorMTLS
+        image resources replicas 等部署欄位
+    }
+
+    class TargetAllocatorPrometheusCR {
+        <<收編 Prometheus Operator 生態的介面>>
+        enabled : bool
+        serviceMonitorSelector : LabelSelector
+        podMonitorSelector : LabelSelector
+        scrapeConfigSelector : LabelSelector
+        probeSelector : LabelSelector
+        allowNamespaces denyNamespaces
+        scrapeInterval : Duration
+    }
+```
+
+讀圖重點：`OpAMPBridgeSpec` 的治理欄位就三個——`endpoint`（連哪個控制面）、`capabilities`（授權它做什麼）、`componentsAllowed`（下推白名單，§2.5 的安全閥）；其餘都是部署欄位。`TargetAllocatorPrometheusCR` 的四組 selector 直接吃 Prometheus Operator 的 CR——這就是 §2.5「ServiceMonitor 一個都不用改」的型別依據。
+
+**治理相關欄位的值域速查**（**粗體**為預設值）：
+
+| 欄位 | 值域 | 治理意義 |
+|---|---|---|
+| `spec.mode` | **deployment** / daemonset / statefulset / sidecar | 決定執行點與生效語意（決策一）；statefulset 是 tail sampling 的前置條件（§2.1） |
+| `spec.managementState` | **managed** / unmanaged | 逐 CR 關掉 reconcile 的安全閥（§2.3） |
+| `spec.upgradeStrategy` | **automatic** / none | operator 升級時是否自動遷移這份 CR（§2.3） |
+| `spec.config.*` | 任意 collector config（透傳） | 決策三；pipeline 接了什麼 receiver ＝ Service 開什麼 port |
+| `targetAllocator.allocationStrategy` | **consistent-hashing** / least-weighted / per-node | 唯一能跑 HA（replicas > 1）的是 consistent-hashing |
+| `instrumentation.spec.sampler.type` | parentbased_traceidratio 等 | 直接變成 `OTEL_TRACES_SAMPLER` / `_ARG` 下發全公司 |
+
+UML 講結構；結構之外，三個設計性質用講的：
 
 **`Instrumentation` 的「純範本」性質是 RBAC 設計的支點**：它不建立資源，所以可以放平台 namespace、業務團隊唯讀，Pod 用 `"opentelemetry/company-default"` 跨 namespace 引用——標準的單一事實來源與寫入權分離，就是這個性質給的。
 
@@ -448,7 +640,7 @@ processors:
 | 分享段落 | 素材來源 | Demo |
 |---|---|---|
 | 0.2 三個設計決策 | `webhookhandler.go` marker、`pkg/sidecar/pod.go`、classroom 第 4/5 章 | — |
-| 0.3 四個 CR | classroom [第 2 章](./02-crd-api-types.md)、[hackmd.md](./hackmd.md) 四大 CR 節、`apis/v1beta1/mode.go` | — |
+| 0.3 四個 CR | UML 依 `apis/v1beta1/`、`apis/v1alpha1/` 型別定義繪製；完整欄位見 [docs/api/](../docs/api/)、classroom [第 2 章](./02-crd-api-types.md)、[hackmd.md](./hackmd.md) | — |
 | 1.1 注入語意 | classroom [第 6 章](./06-auto-instrumentation.md)（推導鏈、env 優先級） | lab [Stage 8](./lab/08-observability-backends.md) §8.5 的 before/after 重播（Grafana 上看 signal 隨 annotation 出現/消失，約 3 分鐘） |
 | 1.2 llm-guard-api 解剖 | [60-example 兩份檔案](./lab/manifests/60-example-llm-guard-api-operator.yaml)（含逐條註解） | before/after 對照投影片 |
 | 1.3–1.5 存量矩陣/組合技/紅線 | [hackmd.md](./hackmd.md)「落地：接入矩陣」「組合技」節、lab Stage 4 | — |
