@@ -288,14 +288,6 @@
   .topo .arrow { color: var(--text-faint); }
 
   /* trace fragmentation lab */
-  .trace-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-  .trace-col { border: 1px solid var(--console-border); border-radius: 4px; padding: 10px; }
-  .trace-col h4 { margin: 0 0 8px; font-family: var(--font-mono); font-size: 11px; color: var(--console-text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
-  .trace-dots { display: flex; flex-wrap: wrap; gap: 6px; }
-  .dot { width: 16px; height: 16px; border-radius: 50%; display: inline-block; }
-  .dot.a { background: var(--accent-source); }
-  .dot.b { background: var(--accent-result); }
-  .dot.c { background: #7b8fd6; }
 
   /* env merge lab */
   .env-rows { display: flex; flex-direction: column; gap: 8px; }
@@ -365,10 +357,9 @@
     <a href="#lab-endpoint">endpoint 陷阱</a>
     <a href="#redlines">紅線</a>
     <a href="#topology">拓撲分析</a>
-    <a href="#lab-trace">trace routing</a>
     <a href="#helm-model">Helm 所有權</a>
     <a href="#versioning">版本治理</a>
-    <a href="#granularity">CR 粒度</a>
+    <a href="#lab-opamp">OpAMP 下推</a>
     <a href="#matrix">失效模式</a>
     <a href="#rollout">落地路徑</a>
   </nav>
@@ -386,19 +377,19 @@
     <dl class="plain-map">
       <div class="plain-row">
         <dt>OpenTelemetryCollector</dt>
-        <dd>規範一台 OTel Collector 要怎麼被部署、部署成什麼 mode（deployment/daemonset/statefulset/sidecar）。</dd>
+        <dd>管兩層：這台 collector <strong>怎麼部署</strong>（mode：deployment/daemonset/statefulset/sidecar、replicas、image），以及<strong>跑什麼設定</strong>（config 原樣透傳）。</dd>
       </div>
       <div class="plain-row">
         <dt>Instrumentation</dt>
-        <dd>OTel SDK 的設定範本，決定各語言的 auto-instrument 要怎麼注入、注入什麼參數——它自己不部署任何東西。</dd>
+        <dd>Auto-instrument 的設定範本——app 掛一個 annotation，webhook 就對 app 容器注入 agent 和一串 <code>OTEL_*</code> env。它自己不部署任何東西，而且跟 sidecar 注入是<strong>兩條各自獨立的路</strong>（各有各的 annotation，可分開用、可搭配用）。</dd>
       </div>
       <div class="plain-row">
         <dt>OpAMPBridge</dt>
-        <dd>讓遠端控制面能治理、管理叢集裡這些 Collector——下指令改設定、觸發滾動更新，都透過它中繼。</dd>
+        <dd>需要即時控制面時的選項——用 OpAMP 協議掌控<strong>有 opt-in</strong> 的 collector 的狀態、版本、設定。下推的落點是回寫 CR、執行者仍是 operator；同一個欄位不能同時讓 Git 和 OpAMP 當主人。</dd>
       </div>
       <div class="plain-row">
         <dt>TargetAllocator</dt>
-        <dd>把 Prometheus 的 scrape target 分配給多個 Collector 副本，讓多副本收 metrics 時不會重複抓。</dd>
+        <dd>把 Prometheus 的 scrape target 分配給多個 collector 副本，多副本收 metrics 不重複抓——而且直接認得現有的 ServiceMonitor。</dd>
       </div>
     </dl>
     <div class="cr-grid">
@@ -557,6 +548,40 @@ spec:
           <div class="lab-note" id="mode-note"></div>
         </div>
       </div>
+    </div>
+
+    <div class="prose wide">
+      <p style="margin-top:24px;">
+        資源清單裡那個 <code>clusterIP: None</code> 的 <strong>headless service</strong> 值得停一下講清楚——它是「gateway
+        為什麼非用 statefulset 不可」的答案。一般 Service 像公司總機：DNS 查它只得到一個虛擬 IP，封包打過去由 kube-proxy
+        隨機轉給某個 Pod，呼叫端永遠不知道後面有幾個副本。Headless service（<code>clusterIP: None</code>）不配虛擬 IP、
+        不做任何轉發，唯一的功能是 DNS：查它會一次回傳<strong>所有 ready Pod 各自的真實 IP</strong>——
+        不幫你挑後端，而是把後端名單整份給你、你自己挑。
+      </p>
+    </div>
+    <div class="split">
+      <div>
+        <p class="pane-label source">一般 Service：總機</p>
+        <div class="snippet" style="margin-top:0;">$ nslookup gateway-collector
+Address: 10.96.34.12      <span class="c"># 一個虛擬 IP，打進去才隨機分</span></div>
+      </div>
+      <div>
+        <p class="pane-label result">Headless：後端名單整份給你</p>
+        <div class="snippet" style="margin-top:0;">$ nslookup gateway-collector-headless
+Address: 10.244.1.5       <span class="c"># gateway-collector-0</span>
+Address: 10.244.2.7       <span class="c"># gateway-collector-1</span>
+Address: 10.244.3.9       <span class="c"># gateway-collector-2</span></div>
+      </div>
+    </div>
+    <div class="prose wide">
+      <p style="margin-top:14px;">
+        Loadbalancing exporter 要「自己按 traceID 決定每條 trace 送哪個副本」，前提是它<strong>看得到所有副本</strong>：
+        指向一般 Service，DNS 只回一個 VIP，exporter 眼中後端只有一台，實際分流被 kube-proxy 隨機做掉，traceID 雜湊全部失效；
+        指向 headless service，<code>resolver: dns</code> 才拿得到完整後端清單。搭配 StatefulSet，每個 Pod 還有穩定的個別
+        DNS 名（<code>gateway-collector-0.gateway-collector-headless…</code>），副本重建名字不變。這就是「gateway 用
+        statefulset mode 不是偏好」的完整因果：exporter 要看到每個副本 → 需要 headless service 的 DNS →
+        statefulset mode 把它長出來、而且是 load-bearing 的。
+      </p>
     </div>
   </section>
 
@@ -973,8 +998,8 @@ spec:
         這個 defaulting webhook 還順手在 CR 上留了一條線索——把套用當下的預設版本寫進
         <code>instrumentation.opentelemetry.io/default-auto-instrumentation-python-image</code> 這個 annotation。
         目的是讓 <code>internal/instrumentation/upgrade</code> 的升級流程日後能分辨：這個 <code>image</code> 是你自己刻意 pin 的，
-        還是當初 operator 隨手補的預設值（如果是後者，operator 升級時可以放心幫你一起往前推）——呼應 §2.3
-        <code>spec.upgradeStrategy</code> 那套逐 CR 安全閥的邏輯。
+        還是當初 operator 隨手補的預設值（如果是後者，operator 升級時可以放心幫你一起往前推）——跟
+        <code>spec.upgradeStrategy</code> 那套逐 CR 安全閥是同一種邏輯。
       </p>
       <p>
         對照組——如果平台團隊決定<strong>自己 pin 版本</strong>，不讓它跟著 operator 走，就是同一份 CR 多兩行：
@@ -1102,19 +1127,20 @@ sampler: { type: parentbased_traceidratio, argument: "0.25" }</div>
     <div class="prose wide">
       <p class="eyebrow">第二部：治理 · 拓撲分析</p>
       <h2>現況的結構性問題，與目標拓撲</h2>
-      <p>兩個結構性問題，都不是「設定沒調好」，是拓撲本身的。</p>
+      <p>一個結構性問題：不是「設定沒調好」，是同一段邏輯散落在每個服務的 values 裡，複製 N 份、各自維護。</p>
     </div>
 
     <div class="snippet-cap">現況資料流</div>
     <div class="topo">
       <span class="node">app SDK</span><span class="arrow">→</span>
       <span class="node warn">手掛 sidecar</span><span class="arrow">→</span>
-      <span class="node">span-lb.open-telemetry.svc（跨 namespace）</span><span class="arrow">→</span>
+      <span class="node">span-lb（traceID LB，跨 namespace）</span><span class="arrow">→</span>
+      <span class="node">span-collector（tail_sampling）</span><span class="arrow">→</span>
       <span class="node">Tempo / metrics 後端</span>
     </div>
 
     <div class="prose wide">
-      <p><strong>問題一：k8s 屬性只能手工拼。</strong> <code>k8sattributes</code> processor 靠連線來源 pod IP 反查 metadata；
+      <p><strong>問題：k8s 屬性只能手工拼。</strong> <code>k8sattributes</code> processor 靠連線來源 pod IP 反查 metadata；
       資料一經任何中繼轉手，來源 IP 就不是原始 Pod。所以每個服務的 values 裡都手工拼了一份 <code>OTEL_RESOURCE_ATTRIBUTES</code> +
       Downward API env——同一段邏輯複製 N 份，這就是「治理缺位」的具體長相。Operator 的解法：注入 sidecar 時自動備好組好的
       <code>OTEL_RESOURCE_ATTRIBUTES</code>（含 owner reference 反查的 deployment/replicaset 名稱），sidecar config 一個
@@ -1257,9 +1283,10 @@ spec:
     </div>
 
     <div class="prose wide">
-      <p><strong>問題二：tail sampling 沒有正確的前置條件。</strong> 多副本 gateway 做 tail sampling，同一 trace 的所有 span 必須進同一副本。
-      <code>span-lb</code> 這個名字暗示有做 span 層級 LB——要驗證它的 routing key 是不是 traceID；如果只是 Service 層的 L4 均衡，
-      tail sampling 的決策一直在看片段。下方機制七直接動手驗這件事。</p>
+      <p><strong>中央層搬進 CR 之後長這樣。</strong> 拓撲跟現況同構：<code>span-lb</code> 對應按 traceID 分流的 agent 層、
+      <code>span-collector</code> 對應跑 <code>tail_sampling</code> 的 gateway 層（示範圖的 agent 用 daemonset；我們的 span-lb
+      是中央式 Deployment，CR 用 <code>mode: deployment</code> 照搬即可）。遷移提醒一條：<code>routing_key: traceID</code>
+      是 tail sampling 的前置條件——同一條 trace 的所有 span 必須進同一副本——現況已經做對，搬 CR 時照搬、別弄丟。</p>
     </div>
 
     <div class="snippet-cap">目標拓撲</div>
@@ -1296,47 +1323,6 @@ spec:
     <div class="prose wide">
       <p style="margin-top:16px;">Gateway 用 <code>statefulset</code> mode 不是偏好，是 loadbalancing resolver 需要 headless service 的穩定 DNS——
       機制二的實驗已經示範過這件事。Sampling 政策只存在 gateway CR 一個地方；換後端不動任何業務部署。</p>
-      <p class="callout">Sidecar 的成本要誠實：per-pod 線性增長。買到 per-pod 身分蓋章、per-service 客製隔離、短生命週期 process 的就近 flush。三個都用不上的服務，讓 SDK 直送 agent 層即可，模型允許混用。</p>
-    </div>
-  </section>
-
-  <!-- ============ LAB 6: trace routing ============ -->
-  <section id="lab-trace">
-    <div class="prose">
-      <p class="eyebrow">機制七 · tail sampling 的前置條件</p>
-      <h2>沒有 <code>routing_key: traceID</code>，tail sampling 只看得到片段</h2>
-      <p>
-        Load balancing exporter 用 traceID 當 routing key 就是為了保證同一條 trace 進同一副本；
-        只靠 Service 的 L4 均衡，同一條 trace 會被隨機打散。
-      </p>
-    </div>
-
-    <div class="lab">
-      <div class="lab-head">
-        <p class="eyebrow">互動實驗</p>
-        <h3>切換 routing_key，看三條 trace 落在哪個 gateway 副本</h3>
-        <p class="goal">同色的點屬於同一條 trace（trace A / B / C），三欄代表三個 gateway 副本。</p>
-      </div>
-      <div class="lab-body">
-        <div class="lab-controls">
-          <span class="ctrl-label">exporters.load_balancing.routing_key</span>
-          <div class="seg" id="rk-seg">
-            <button type="button" data-rk="on" aria-pressed="true">traceID</button>
-            <button type="button" data-rk="off" aria-pressed="false">未設定（Service 層 L4）</button>
-          </div>
-        </div>
-        <div class="lab-output">
-          <p class="pane-label result">三個 gateway 副本收到的 span</p>
-          <div class="trace-grid" id="trace-grid"></div>
-          <div class="status-row" style="margin-top: 4px;"><span class="lbl">同一條 trace 完整落在單一副本的比例</span><span id="trace-ratio"></span></div>
-          <div class="lab-note">
-            <span class="dot a"></span> trace A
-            <span class="dot b"></span> trace B
-            <span class="dot c"></span> trace C
-            ——片段化時，每個副本的 <code>tail_sampling</code> 只看到自己收到的那幾個 span，errors/latency policy 判斷不完整。
-          </div>
-        </div>
-      </div>
     </div>
   </section>
 
@@ -1419,121 +1405,17 @@ spec:
   <section id="versioning" class="minor">
     <div class="prose wide">
       <p class="eyebrow">第二部：治理 · 版本治理</p>
-      <h2><code>versions.txt</code> 模型 vs 自建 image</h2>
+      <h2>版本對照表：<code>versions.txt</code></h2>
       <p>
-        Operator 的版本治理模型：<code>versions.txt</code> 把 collector、各語言 agent、target allocator 的版本釘成一組——
-        發佈一個 operator 版本＝發佈一整組驗證過的元件版本。Operator 升級時，upgrade routine 主動把 cluster 裡所有 CR 遷到新 schema/預設值；
-        <code>spec.upgradeStrategy: none</code> 和 <code>spec.managementState: unmanaged</code> 是逐 CR 的安全閥。
-      </p>
-      <p class="callout warn">
-        <strong>跟自建 image 直接衝突的現實：</strong><code>spec.image</code> 明確指定時，operator 的自動版本升級不會動它——保留了自建 pipeline 的控制權，
-        但也放棄了「升 operator＝升全部 collector」的治理紅利。Collector 版本的治理責任仍在自己的 image pipeline。
-      </p>
-      <p>
-        建議做法：<strong>agent 交給 operator 治理（不 pin），collector 維持自建</strong>——兩者的客製需求不同（collector 有公司內部 exporter/processor 的需求，agent 沒有）。
-        自建 image 的升級節奏要跟 operator 版本對表（operator 解析 config 推導 port/RBAC，跨大版本的 config schema 變更兩邊要同步驗）。
-      </p>
-      <p>
-        平台治理團隊要盯版本，不用一個一個查 <code>versions.txt</code> 對照 changelog——官方所有元件的 image
-        都發佈在<strong>同一個地方</strong>：<a href="https://github.com/orgs/open-telemetry/packages?repo_name=opentelemetry-operator">github.com/orgs/open-telemetry/packages</a>（filter
-        成 <code>opentelemetry-operator</code> repo）。上面看得到 <code>opentelemetry-operator</code>、
-        <code>target-allocator</code>、<code>operator-opamp-bridge</code> 本體，跟 <code>autoinstrumentation-java</code>／
-        <code>-python</code>／<code>-nodejs</code>／<code>-dotnet</code>／<code>-apache-httpd</code> 這幾個 CR 裡會填的 image，
-        每個 tag 都能反查是哪次 release 帶出來的——決定「哪些交給 operator 自動升、哪些自己 pin 死」之前，先看這裡有沒有新版本。
-      </p>
-      <p class="callout warn">
-        <strong>裡面還有一個 <code>autoinstrumentation-php</code>——但它不代表 PHP 有自動注入。</strong>
-        這個 image 是 <code>autoinstrumentation/php/</code> 目錄建出來的 PECL extension 檔案，純粹提供給要自己組 base image 的團隊拉取；
-        <code>InstrumentationSpec</code> 沒有對應的 <code>php</code> 欄位、也沒有 <code>inject-php</code> annotation——
-        webhook 不會替你把它裝進任何 Pod。跟存量矩陣那節講的一樣：PHP 只能走 <code>inject-sdk</code>，這個 image 只是「原料」，裝進 image 是自己的事。
+        每個 operator 版本預設搭配哪個 collector 版本、各語言 agent 哪個版本，都釘在
+        <a href="https://github.com/open-telemetry/opentelemetry-operator/blob/main/versions.txt">versions.txt</a>——
+        升 operator 就是換掉這整組預設值。兩條實務規則：<strong>agent 不 pin、跟著 operator 走</strong>；
+        <strong>collector 用自建 image 寫在 <code>spec.image</code></strong>，operator 的自動升級不會動它，版本節奏由自己的 image pipeline 負責。
       </p>
     </div>
   </section>
 
-  <!-- ============ 2.4 CR 粒度 ============ -->
-  <section id="granularity">
-    <div class="prose wide">
-      <p class="eyebrow">第二部：治理 · CR 粒度</p>
-      <h2>CR 的邊界＝爆炸半徑的邊界</h2>
-      <p>兩種 CR 的客製化語意天差地遠，決定了「什麼時候該拆 CR」。</p>
-    </div>
-    <div class="table-scroll">
-      <table class="dtable">
-        <thead><tr><th></th><th>Sidecar collector CR</th><th>Instrumentation CR</th></tr></thead>
-        <tbody>
-          <tr><td class="k">客製化語意</td><td>Config 整份取代，無欄位優先權</td><td>Env 逐項合併（append-if-not-set）</td></tr>
-          <tr><td class="k">「這個服務想不一樣」</td><td>只能 clone 一份 CR</td><td>多數情況不用 clone——值留在 app 自己的 env 就贏了</td></tr>
-          <tr><td class="k">拆分判準</td><td>需求會分岔的團隊，現在就拆</td><td>只有「endpoint/sampler/image/resources 這種 CR 層欄位」要不一樣時才拆</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="prose wide">
-      <p style="margin-top:16px;">
-        <strong><code>image</code>／<code>resources</code> 屬於「CR 層欄位」，沒有 Pod 端覆蓋的逃生門。</strong>
-        查過 <code>internal/instrumentation/annotation.go</code> 全部的 annotation，Pod 能動的只有 <code>inject-&lt;lang&gt;</code>、
-        <code>container-names</code>，加上 python/dotnet/go 各自一個輔助 annotation——沒有任何一個能在 Pod 層級覆蓋 agent image。
-        跟 <code>env</code> 不同（四層合併，container 自己的值天生贏），<code>image</code> 就是整份 CR 共用一個值，誰引用就套誰。
-        某個服務想先試新版 agent、其他服務不動，唯一做法是 clone 一份 CR 讓那個服務的 annotation 改指過去。
-      </p>
-      <p>不同語言要用不同版本，倒是同一份 CR 內建就會的事——每個語言各自一個獨立的 <code>image</code> 欄位，互不影響：</p>
-    </div>
-    <div class="snippet">apiVersion: opentelemetry.io/v1alpha1
-<span class="c">kind: Instrumentation</span>
-metadata:
-  name: company-default
-  namespace: opentelemetry
-spec:
-  exporter:
-    endpoint: http://gateway-collector.open-telemetry.svc:4318
-  sampler:
-    type: parentbased_traceidratio
-    argument: "0.25"
-
-  java:
-    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:<span class="hl">2.28.1</span>
-  python:
-    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:<span class="hl">0.63b1</span>
-  nodejs:
-    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs:<span class="hl">0.203.0</span></div>
-    <div class="prose wide">
-      <p>
-        Pod 端的 <code>instrumentation.opentelemetry.io/inject-python</code> annotation 指到這份 CR 時，operator 只挑
-        <code>spec.python</code> 那一段來用；同一份 CR 被 <code>inject-java</code> 的 Pod 引用時，只挑 <code>spec.java</code>——
-        彼此互不干擾，不用因為語言不同就拆成多份 CR。
-      </p>
-      <p><strong>Sidecar CR 可以共用嗎？</strong>可以，機制上兩個常見疑慮都不成立：annotation 支援跨 namespace 引用；
-      config 整份 inline 進 <code>OTEL_CONFIG</code> env，不落地任何 ConfigMap；per-pod metadata 是注入當下逐 Pod 計算的，不是從 CR 來的。
-      一份共用 CR，N 個 Pod 各自拿到正確身分。</p>
-      <p>共用的真正約束是三條：</p>
-      <ol>
-        <li>Config 必須 namespace 中立——exporter endpoint 用 FQDN。</li>
-        <li>避開 <code>spec.configMaps</code>/<code>spec.volumes</code>/secretKeyRef——這些以 <code>LocalObjectReference</code> 在 Pod 的 namespace 解析。</li>
-        <li>Config 無合併語意——per-service 差異只能 clone。</li>
-      </ol>
-      <p class="callout">Webhook 用 operator 的權限讀 CR，沒有「誰有資格引用哪份 CR」的授權檢查——per-team CR 防不了被別的團隊誤指，防線是 annotation 的 code review。</p>
-    </div>
-
-    <div class="snippet-cap">兩種 processor 各一段</div>
-    <div class="snippet">processors:
-  attributes/order_team:           <span class="c"># 固定標籤：attributes processor 就夠</span>
-    actions:
-      - { key: team,        value: "order-team", action: insert }
-      - { key: cost_center, value: "CC-4821",    action: insert }
-  transform/order_team:            <span class="c"># 條件 + regex 遮罩：才需要 OTTL</span>
-    trace_statements:
-      - context: span
-        statements:
-          - replace_pattern(attributes["db.statement"],
-              <span class="hl">"(?i)VALUES\\s*\\([^)]*\\)"</span>, "VALUES (***redacted***)")
-            where attributes["db.statement"] != nil</div>
-    <div class="prose wide">
-      <p>選型法則：固定 key/value 用 <code>attributes</code>；條件、regex、跨欄位才上 <code>transform</code>（OTTL）；合規更嚴用 <code>delete_key</code>。</p>
-      <p class="callout warn">一條實測教訓：Hibernate 產小寫 <code>values</code>，沒加上面那個 <code>(?i)</code> 的遮罩規則<strong>靜默不匹配</strong>——語法全對、collector 不報錯、資料照漏。OTTL 政策上線前要拿真實流量驗證命中率。</p>
-    </div>
-  </section>
-
-  <!-- ============ 2.5 延伸路 ============ -->
+  <!-- ============ 2.4 延伸路 ============ -->
   <section id="extensions" class="minor">
     <div class="prose wide">
       <p class="eyebrow">第二部：治理 · 兩條延伸路</p>
@@ -1543,12 +1425,177 @@ spec:
         TA 的 <code>prometheusCR.enabled</code> 直接認得現有 ServiceMonitor/PodMonitor，各團隊已寫好的 monitor 一個都不用改。
       </p>
       <p>
-        <strong>OpAMP</strong>——多環境的控制面選項。每個 cluster 跑一個 bridge，把該 cluster 裡 operator 管的所有 collector 代理給遠端控制面：
-        回報 effective config、接受下推（回寫 CR，滾動更新交回 operator）、<code>componentsAllowed</code> 當白名單安全閥。
+        <strong>OpAMP</strong>——多環境的控制面選項。每個 cluster 跑一個 bridge（<code>OpAMPBridge</code> CR，operator 自己 reconcile 出來的
+        Deployment），把該 cluster 裡 operator 管的 collector 代理給遠端控制面：回報身分、健康、effective config，接受下推。
+        關鍵設計是<strong>下推不繞過 operator</strong>：bridge 收到 RemoteConfig 後做的事是「回寫 CR」，
+        接下來仍是 operator 的 reconcile 迴圈完成滾動更新——CR 從頭到尾都是 single source of truth。
+      </p>
+    </div>
+    <div class="snippet-cap">下推的完整鏈路</div>
+    <div class="topo">
+      <span class="node">OpAMP server（控制面）</span><span class="arrow">→</span>
+      <span class="node warn">bridge：componentsAllowed 驗證</span><span class="arrow">→</span>
+      <span class="node">回寫 collector CR</span><span class="arrow">→</span>
+      <span class="node ok">operator reconcile → 滾動更新</span>
+    </div>
+    <div class="prose wide">
+      <p style="margin-top:14px;">三個設定要點（lab Stage 5/6 實測）：</p>
+      <ol>
+        <li><strong>Collector 要 opt-in，而且有兩個等級</strong>——<code>opentelemetry.io/opamp-managed: "true"</code>
+          是可讀可寫（bridge 回報它，server 也能下推修改；值也可以填 bridge 名字，多 bridge 時指定歸屬）；
+          <code>opentelemetry.io/opamp-reporting: "true"</code> 是唯讀（回報給控制面看，bridge 明確拒絕任何下推修改）。
+          兩個 label 都沒貼的 collector，bridge 完全看不見。中央 gateway 貼 managed、各服務的 sidecar CR 貼 reporting，
+          就是「可視性全拿、寫入權限收窄」的現成治理工具。</li>
+        <li><strong>RBAC 要自己補</strong>——operator 會替 bridge 建 ServiceAccount，但不會給它「讀 collector CR」的權限；漏了就是 bridge 連得上、控制面一個 collector 都看不到。</li>
+        <li><strong>完整報告只送一次</strong>——bridge 只在連線建立當下回報 effective config，之後的 heartbeat 只帶 health；控制面要即時看到設定變化，重送機制得自己處理。</li>
+      </ol>
+      <p>
+        守門員只有 <code>componentsAllowed</code> 白名單，而它<strong>只檢查 <code>spec.config</code> 裡的
+        receivers/processors/exporters</strong>——<code>spec.image</code>、<code>spec.replicas</code> 這些部署層欄位完全不在檢查範圍。
+        這是雙面刃：遠端版本升級（下推新 <code>spec.image</code>）因此走得通，lab Stage 6 全程沒碰 kubectl 完成了一次滾動升級；
+        但同一條路也代表 remote config 能改的是<strong>整份 spec</strong>——控制面自身的安全要按這個等級設防。下方機制七動手玩三種下推。
+      </p>
+      <p style="margin-top:16px;">
+        <strong>延伸一：控制面不是 K8s 專屬——同一個 server 也管得到 VM 上的 collector。</strong>
+        OpAMP 的 agent 端有兩種官方實作：K8s 裡是 bridge；K8s 之外是
+        <a href="https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/cmd/opampsupervisor">OpAMP Supervisor</a>——
+        跑在 VM／裸機上、貼身照顧單一 collector process 的保母程式。對 server 而言兩者是同一種 agent，
+        哪天有 collector 跑在 cluster 之外（edge、legacy host），控制面不用分家。
+      </p>
+    </div>
+    <div class="table-scroll">
+      <table class="dtable">
+        <thead><tr><th></th><th>K8s（bridge + operator）</th><th>VM／裸機（supervisor）</th></tr></thead>
+        <tbody>
+          <tr><td class="k">跟 server 講話的是誰</td><td>bridge——一個 cluster 一隻，代理 N 個 collector</td><td>supervisor——一台機器一隻，管一個 collector process</td></tr>
+          <tr><td class="k">下推 config 的落點</td><td>回寫 CR → operator reconcile 滾動更新</td><td>寫 config.yaml → 重啟 process（watchdog 自動重啟）</td></tr>
+          <tr><td class="k">版本升級</td><td>改 <code>spec.image</code> → 拉新 image</td><td>下載 signed binary、Cosign 驗簽、替換、可回滾</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="prose wide">
+      <p style="margin-top:16px;">
+        <strong>延伸二：自建 OpAMP server 的門檻不高。</strong>
+        官方 <a href="https://github.com/open-telemetry/opamp-go">opamp-go</a>（bridge 用的同一個 module）給三個 package：
+        <code>protobufs</code>（協議全部訊息型別）、<code>server</code>（WebSocket 監聽、握手、訊息編解碼全包掉，你只實作
+        <code>OnMessage</code> callback）、<code>client</code>（agent 側，bridge 內部用的就是它）。它刻意不給的是業務邏輯——
+        agent 清冊、config 版本管理、UI、認證授權都要自己補。lab 的 opamp-server 是最小證據：全部 265 行，協議處理不到 20 行。
+        兩個實戰要點：server 回應時必須宣告自己的 capabilities（沒宣告 <code>AcceptsEffectiveConfig</code>，agent 根本不會回報設定）；
+        server 不能主動 push——OpAMP 是 agent 先連上來的協議，下推只能「登記意圖、等 agent 下次回報時夾帶」，
+        呼應上面「完整報告只送一次」那條。
       </p>
       <p class="callout warn">
         它跟 GitOps 是競合關係——同一份 CR 不能同時被 ArgoCD 和 OpAMP server 當 source of truth，選了 OpAMP 下推的欄位就要從 Git 管理範圍拿掉，否則兩個控制面互相打架。多環境如果 GitOps 已經順，OpAMP 的增量價值在「秒級動態調參」而不是常規變更。
       </p>
+      <p style="margin-top:16px;">
+        <strong>實務上，企業拿 OpAMP 主要做兩件事。</strong>其一是<strong>機隊可視性</strong>：agent 清冊、版本分布、健康狀態、
+        effective config 的集中檢視與 drift 偵測。單一 cluster 裡 <code>kubectl</code> + ArgoCD 能覆蓋大半，
+        但跨多 cluster（l-/s-/p- 三套環境）要「一個畫面看完所有 collector 此刻實際生效的設定」，
+        bridge 回報的 EffectiveConfig 就是現成的資料源——lab Stage 5 那支 server 印出來的東西，接上 UI 就是這個場景。
+      </p>
+      <p>
+        其二是<strong>動態調參</strong>，事故處理的兩個標準動作，臨時態不進 Git 歷史、也不用半夜等 PR review。
+        <strong>動作一，臨時調 sampling</strong>：tail_sampling 的 policy 之間是 OR——事故時下推多加一條
+        <code>string_attribute</code> policy，出事服務的 trace 全留、其他服務照舊 10%，查完把這條推回去拿掉：
+      </p>
+    </div>
+    <div class="split">
+      <div>
+        <p class="pane-label source">平常：errors/slow 全留 + 其餘 10%</p>
+        <div class="snippet" style="margin-top:0;">processors:
+  tail_sampling:
+    policies:
+      - { name: errors, type: status_code, ... }
+      - { name: slow,   type: latency, ... }
+      - { name: rest,   type: probabilistic,
+          probabilistic: { sampling_percentage: 10 } }</div>
+      </div>
+      <div>
+        <p class="pane-label result">事故中：出事服務全留（OpAMP 下推）</p>
+        <div class="snippet" style="margin-top:0;">processors:
+  tail_sampling:
+    policies:
+      - { name: errors, type: status_code, ... }
+      - { name: slow,   type: latency, ... }
+      - { name: rest,   type: probabilistic,
+          probabilistic: { sampling_percentage: 10 } }
+      <span class="hl">- name: incident-llm-guard   <span class="c"># policy 間是 OR：命中就留</span>
+        type: string_attribute
+        string_attribute:
+          key: service.name
+          values: [llm-guard-api]</span></div>
+      </div>
+    </div>
+    <div class="prose wide">
+      <p>
+        <strong>動作二，臨時開 log level</strong>：平常 gateway 的 filter processor 把 error 以下的 log 全部擋掉
+        （控制儲存成本），事故時對單一服務下推一條例外，它的 debug/info 立刻放行，查完再推回原樣：
+      </p>
+    </div>
+    <div class="split">
+      <div>
+        <p class="pane-label source">平常：error 以下全擋</p>
+        <div class="snippet" style="margin-top:0;">processors:
+  filter/severity-gate:
+    logs:
+      log_record:
+        - severity_number &lt; SEVERITY_NUMBER_ERROR</div>
+      </div>
+      <div>
+        <p class="pane-label result">事故中：對單一服務放行（OpAMP 下推）</p>
+        <div class="snippet" style="margin-top:0;">processors:
+  filter/severity-gate:
+    logs:
+      log_record:
+        - <span class="hl">resource.attributes["service.name"] != "llm-guard-api"</span>
+          and severity_number &lt; SEVERITY_NUMBER_ERROR
+          <span class="c"># 查完把例外推回去拿掉</span></div>
+      </div>
+    </div>
+    <div class="prose wide">
+      <p style="margin-top:14px;">
+        這招有三個前提要誠實。<strong>Gate 在 pipeline，不在 app</strong>——app 的 logger 要本來就把 debug/info 打出來
+        （成本控制靠 collector 端擋，不靠 app 端不打），OpAMP 改的是 collector pipeline，改不了 app 自己的 logger level；
+        app 端 logger 若設在 error，這招變不出 debug log。<strong>白名單要先開路</strong>——<code>componentsAllowed</code>
+        沒放行 <code>filter</code>，這條下推會被機制七示範的那種靜默失敗擋下。<strong>「秒級」其實是分鐘級</strong>——
+        下推仍走回寫 CR → reconcile → 滾動更新這條路，生效要等 pod 滾完；但相比 PR + review + CD，仍是量級的差異。
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ LAB 7: OpAMP push ============ -->
+  <section id="lab-opamp">
+    <div class="prose">
+      <p class="eyebrow">機制七 · OpAMP 下推的守門邏輯</p>
+      <h2>白名單擋什麼、放什麼，就是控制面的權力邊界</h2>
+      <p>
+        Bridge 收到 RemoteConfig 時只做一件驗證：檢查 config 用到的元件是否都在 <code>componentsAllowed</code> 白名單裡
+        （<code>validateComponents</code>，只看 <code>spec.config</code>）。驗證過，就整份 spec 回寫 CR，交還 operator。
+      </p>
+    </div>
+
+    <div class="lab">
+      <div class="lab-head">
+        <p class="eyebrow">互動實驗</p>
+        <h3>從控制面下推三種 RemoteConfig，看 bridge 端各發生什麼</h3>
+        <p class="goal">白名單設定（lab Stage 5 的 40-opampbridge.yaml）：receivers [otlp]、processors [batch, memory_limiter, tail_sampling]、exporters [debug, otlp, load_balancing]。</p>
+      </div>
+      <div class="lab-body">
+        <div class="lab-controls">
+          <span class="ctrl-label">server 下推的 RemoteConfig</span>
+          <div class="seg" id="op-seg">
+            <button type="button" data-op="ok" aria-pressed="true">調 tail_sampling 參數（元件全在白名單）</button>
+            <button type="button" data-op="blocked" aria-pressed="false">加 k8sattributes processor（白名單外）</button>
+            <button type="button" data-op="image" aria-pressed="false">換 spec.image（版本升級）</button>
+          </div>
+        </div>
+        <div class="lab-output">
+          <p class="pane-label result">bridge 端發生的事</p>
+          <div class="status-grid" id="op-steps"></div>
+          <div class="status-row" style="margin-top:4px;"><span class="lbl">結果</span><span id="op-pill"></span></div>
+          <div class="lab-note" id="op-note"></div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -1927,28 +1974,57 @@ spec:
   seg(document.getElementById("ep-seg"), "data-ep", renderEp);
   renderEp("empty");
 
-  /* ---------- LAB 6: trace routing ---------- */
-  var traceLayouts = {
-    on: [["a", "a", "a"], ["b", "b", "b"], ["c", "c", "c"]],
-    off: [["a", "b", "c"], ["b", "c", "a"], ["c", "a", "b"]]
+  /* ---------- LAB 7: OpAMP push ---------- */
+  var opScenarios = {
+    ok: {
+      steps: [
+        ["1. server 回應夾帶 RemoteConfig", "ok", "送出"],
+        ["2. bridge validateComponents", "ok", "元件全在白名單"],
+        ["3. 回寫 collector CR（整份 spec 取代）", "ok", "Update 成功"],
+        ["4. operator reconcile", "ok", "滾動更新"]
+      ],
+      pill: ["ok", "政策生效——經由 CR，不是繞過它"],
+      note: "下推改的是 CR，operator 照常接手滾動更新。也因此，這份 CR 的 source of truth 是 OpAMP 還是 GitOps，必須先講清楚。"
+    },
+    blocked: {
+      steps: [
+        ["1. server 回應夾帶 RemoteConfig", "ok", "送出（server 端 log 顯示成功）"],
+        ["2. bridge validateComponents", "danger", "Items in config are not allowed"],
+        ["3. 回寫 collector CR", null, "不會發生"],
+        ["4. operator reconcile", null, "不會發生"]
+      ],
+      pill: ["danger", "靜默失敗：CR 原封不動"],
+      note: "白名單檢查在 bridge 端，server 端不知道被擋——控制面看起來成功了，叢集什麼都沒發生。lab Stage 6 實測踩到：對 agent collector 下推時，k8sattributes/resourcedetection 不在白名單，整個 Apply 被擋。"
+    },
+    image: {
+      steps: [
+        ["1. server 回應夾帶 RemoteConfig", "ok", "送出"],
+        ["2. bridge validateComponents", "warn", "不檢查——白名單只驗 spec.config"],
+        ["3. 回寫 collector CR（整份 spec 取代）", "ok", "spec.image 換成新版"],
+        ["4. operator reconcile", "ok", "滾動升級到新版 collector"]
+      ],
+      pill: ["warn", "成功，但沒有任何守門"],
+      note: "lab Stage 6 實測全程不碰 kubectl 完成升級。同一條路代表 image/replicas/env 都能被控制面改——remote config 的授權邊界是「整份 spec」，控制面自身的存取控制要按這個等級設防。"
+    }
   };
-  function renderTrace(rk) {
-    var grid = document.getElementById("trace-grid");
-    var layout = traceLayouts[rk];
+  function renderOp(op) {
+    var sc = opScenarios[op];
+    var grid = document.getElementById("op-steps");
     grid.innerHTML = "";
-    layout.forEach(function (col, idx) {
-      var div = document.createElement("div");
-      div.className = "trace-col";
-      var dots = col.map(function (t) { return '<span class="dot ' + t + '"></span>'; }).join("");
-      div.innerHTML = "<h4>gateway-" + idx + "</h4><div class='trace-dots'>" + dots + "</div>";
-      grid.appendChild(div);
+    sc.steps.forEach(function (s) {
+      var row = document.createElement("div");
+      row.className = "status-row";
+      var badge = s[1]
+        ? '<span class="pill ' + s[1] + '">' + s[2] + "</span>"
+        : '<span style="color:var(--console-text-dim)">—（' + s[2] + "）</span>";
+      row.innerHTML = '<span class="lbl">' + s[0] + "</span>" + badge;
+      grid.appendChild(row);
     });
-    document.getElementById("trace-ratio").innerHTML = rk === "on"
-      ? '<span class="pill ok">100%（每條 trace 完整落在單一副本）</span>'
-      : '<span class="pill danger">0%（每條 trace 都被拆到三個副本）</span>';
+    document.getElementById("op-pill").innerHTML = '<span class="pill ' + sc.pill[0] + '">' + sc.pill[1] + "</span>";
+    document.getElementById("op-note").textContent = sc.note;
   }
-  seg(document.getElementById("rk-seg"), "data-rk", renderTrace);
-  renderTrace("on");
+  seg(document.getElementById("op-seg"), "data-op", renderOp);
+  renderOp("ok");
 
 })();
 </script>

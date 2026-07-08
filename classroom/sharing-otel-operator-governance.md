@@ -19,7 +19,7 @@
 | 0:00 – 0:20 | 開場 | 問題框架；三個設計決策；四個 CR 的角色與治理定位 |
 | 0:20 – 0:55 | **第一部：擴散** | 注入機制的架構要點、llm-guard-api 遷移解剖、存量矩陣、紅線 |
 | 0:55 – 1:00 | 中場休息 | |
-| 1:00 – 1:45 | **第二部：治理** | 拓撲分析（現況 vs 目標）、Helm 所有權模型、版本治理、CR 粒度、延伸路 |
+| 1:00 – 1:45 | **第二部：治理** | 拓撲分析（現況 vs 目標）、Helm 所有權模型、版本治理、延伸路 |
 | 1:45 – 2:00 | 收尾 | 失效模式矩陣、落地路徑、討論 |
 
 ---
@@ -96,8 +96,8 @@ configmap/gateway-collector-<hash>
 |---|---|---|---|
 | `OpenTelemetryCollector`（v1beta1，唯一 stable） | 管線拓撲與資料政策：sampling、遮罩、路由、資源上限 | `spec.mode` 驅動資源組合；`spec.config` 透傳（決策三） | `span-lb`/`collector` 的目的地；各服務的手掛 sidecar |
 | `Instrumentation`（v1alpha1） | 接入標準：agent 版本、endpoint、propagator、sampler | **純範本，不建立任何資源**；env 逐項合併 | 取代各 app values 裡那串 `OTEL_*` env |
-| `OpAMPBridge`（v1alpha1） | Collector 群的遠端控制面 | 代理「本 cluster 中 operator 管的 collector」給遠端 server，下推**回寫 CR**、滾動更新交回 operator | `l-`/`s-`/`p-` 多環境的控制面選項（§2.5） |
-| `TargetAllocator`（v1alpha1，可獨立或內嵌） | Prometheus scrape target 在多副本間的分配 | `prometheusCR.enabled` 直接認得 ServiceMonitor/PodMonitor | 我們現有的 serviceMonitors 資產（§2.5） |
+| `OpAMPBridge`（v1alpha1） | Collector 群的遠端控制面 | 代理「本 cluster 中 operator 管的 collector」給遠端 server，下推**回寫 CR**、滾動更新交回 operator | `l-`/`s-`/`p-` 多環境的控制面選項（§2.4） |
+| `TargetAllocator`（v1alpha1，可獨立或內嵌） | Prometheus scrape target 在多副本間的分配 | `prometheusCR.enabled` 直接認得 ServiceMonitor/PodMonitor | 我們現有的 serviceMonitors 資產（§2.4） |
 
 與其逐段貼型別定義，可配置面用三張 UML 看完（只畫治理相關欄位，類別名與 repo 內的 Go struct 一一對應；完整欄位見 [docs/api/](../docs/api/)）。
 
@@ -290,15 +290,15 @@ classDiagram
     }
 ```
 
-讀圖重點：`OpAMPBridgeSpec` 的治理欄位就三個——`endpoint`（連哪個控制面）、`capabilities`（授權它做什麼）、`componentsAllowed`（下推白名單，§2.5 的安全閥）；其餘都是部署欄位。`TargetAllocatorPrometheusCR` 的四組 selector 直接吃 Prometheus Operator 的 CR——這就是 §2.5「ServiceMonitor 一個都不用改」的型別依據。
+讀圖重點：`OpAMPBridgeSpec` 的治理欄位就三個——`endpoint`（連哪個控制面）、`capabilities`（授權它做什麼）、`componentsAllowed`（下推白名單，§2.4 的安全閥）；其餘都是部署欄位。`TargetAllocatorPrometheusCR` 的四組 selector 直接吃 Prometheus Operator 的 CR——這就是 §2.4「ServiceMonitor 一個都不用改」的型別依據。
 
 **治理相關欄位的值域速查**（**粗體**為預設值）：
 
 | 欄位 | 值域 | 治理意義 |
 |---|---|---|
 | `spec.mode` | **deployment** / daemonset / statefulset / sidecar | 決定執行點與生效語意（決策一）；statefulset 是 tail sampling 的前置條件（§2.1） |
-| `spec.managementState` | **managed** / unmanaged | 逐 CR 關掉 reconcile 的安全閥（§2.3） |
-| `spec.upgradeStrategy` | **automatic** / none | operator 升級時是否自動遷移這份 CR（§2.3） |
+| `spec.managementState` | **managed** / unmanaged | 逐 CR 關掉 reconcile 的安全閥 |
+| `spec.upgradeStrategy` | **automatic** / none | operator 升級時是否自動遷移這份 CR |
 | `spec.config.*` | 任意 collector config（透傳） | 決策三；pipeline 接了什麼 receiver ＝ Service 開什麼 port |
 | `targetAllocator.allocationStrategy` | **consistent-hashing** / least-weighted / per-node | 唯一能跑 HA（replicas > 1）的是 consistent-hashing |
 | `instrumentation.spec.sampler.type` | parentbased_traceidratio 等 | 直接變成 `OTEL_TRACES_SAMPLER` / `_ARG` 下發全公司 |
@@ -309,7 +309,7 @@ UML 講結構；結構之外，三個設計性質用講的：
 
 **`OpAMPBridge` 的回寫語意**：server 下推的不是 collector config 而是 CR 變更，bridge 改寫 CR、operator 照常 reconcile——控制面疊在 operator 之上而不是繞過它，所以 `componentsAllowed` 白名單、Git diff 這些既有防線仍然有效。
 
-**`TargetAllocator` 是四個裡治理色彩最淡的**，價值在遷移路徑：讓 Prometheus 生態的收編不需要重寫任何 ServiceMonitor。今天只在 §2.5 帶到。
+**`TargetAllocator` 是四個裡治理色彩最淡的**，價值在遷移路徑：讓 Prometheus 生態的收編不需要重寫任何 ServiceMonitor。今天只在 §2.4 帶到。
 
 ---
 
@@ -445,21 +445,21 @@ spec:
 **現況資料流**（從 llm-guard-api 的 config 反推）：
 
 ```
-app SDK → 手掛 sidecar → span-lb.open-telemetry.svc（跨 namespace 中央 collector）→ Tempo
+app SDK → 手掛 sidecar → span-lb（traceID LB，open-telemetry ns）→ span-collector（tail_sampling）→ Tempo
                         → collector.open-telemetry.svc → metrics 後端
 ```
 
-兩個結構性問題，都不是「設定沒調好」，是拓撲本身的：
+一個結構性問題：不是「設定沒調好」，是同一段邏輯散落在每個服務的 values 裡，複製 N 份、各自維護。
 
-1. **k8s 屬性只能手工拼。** `k8sattributes` processor 靠連線來源 pod IP 反查 metadata；資料一經任何中繼轉手，來源 IP 就不是原始 Pod。我們的 sidecar 直送跨 namespace 的中央 collector，中央層看到的 IP 是 sidecar 所在 Pod 的——勉強可用，但只要中間再加一層 LB 就失真。所以每個服務的 values 裡都手工拼了一份 `OTEL_RESOURCE_ATTRIBUTES` + Downward API env——**同一段邏輯複製 N 份，這就是「治理缺位」的具體長相**。operator 的解法：注入 sidecar 時自動備好組好的 `OTEL_RESOURCE_ATTRIBUTES`（含 owner reference 反查的 deployment/replicaset 名稱，[`pkg/sidecar/attributes.go`](../pkg/sidecar/attributes.go)），sidecar config 一個 `resourcedetection`（env detector）收工——不打 k8s API、不用 RBAC、沒有 k8sattributes 的 cache 開銷。
-2. **tail sampling 沒有正確的前置條件。** 多副本 gateway 做 tail sampling，同一 trace 的所有 span 必須進同一副本。目前 `span-lb` 這個名字暗示有做 span 層級 LB——遷移時要驗證它的 routing key 是不是 traceID；如果只是 Service 層的 L4 均衡，tail sampling 的決策一直在看片段。
-
-**目標拓撲**（lab [Stage 2](./lab/02-collector-gateway-and-loadbalancer.md) 的標準解）：
+**問題：k8s 屬性只能手工拼。** `k8sattributes` processor 靠連線來源 pod IP 反查 metadata；資料一經任何中繼轉手，來源 IP 就不是原始 Pod。我們的 sidecar 直送跨 namespace 的中央 collector，中央層看到的 IP 是 sidecar 所在 Pod 的——勉強可用，但只要中間再加一層 LB 就失真。所以每個服務的 values 裡都手工拼了一份 `OTEL_RESOURCE_ATTRIBUTES` + Downward API env——**同一段邏輯複製 N 份，這就是「治理缺位」的具體長相**。operator 的解法：注入 sidecar 時自動備好組好的 `OTEL_RESOURCE_ATTRIBUTES`（含 owner reference 反查的 deployment/replicaset 名稱，[`pkg/sidecar/attributes.go`](../pkg/sidecar/attributes.go)），sidecar config 一個 `resourcedetection`（env detector）收工——不打 k8s API、不用 RBAC、沒有 k8sattributes 的 cache 開銷。
+**目標拓撲**（lab [Stage 2](./lab/02-collector-gateway-and-loadbalancer.md) 的標準解，跟現況同構——`span-lb` 對應按 traceID 分流的 agent 層、`span-collector` 對應跑 `tail_sampling` 的 gateway 層）：
 
 ```
 sidecar（k8s 屬性蓋章）→ agent DaemonSet（memory_limiter、loadbalancing exporter,
                           routing_key: traceID）→ gateway StatefulSet × N（tail_sampling）→ 後端
 ```
+
+遷移提醒一條：`routing_key: traceID` 是 tail sampling 的前置條件——同一條 trace 的所有 span 必須進同一副本——現況的 `span-lb` 已經做對（見 [migration-otel-104](./migration-otel-104/README.md) 的現況盤點），搬 CR 時照搬、別弄丟。示範圖的 agent 用 daemonset；我們的 span-lb 是中央式 Deployment，CR 用 `mode: deployment` 照搬即可。
 
 整個拓撲的核心就這兩段 config（完整版：lab [10-collector-gateway.yaml](./lab/manifests/10-collector-gateway.yaml)、[11-collector-agent-lb.yaml](./lab/manifests/11-collector-agent-lb.yaml)）：
 
@@ -487,7 +487,6 @@ processors:
 
 - gateway 用 `statefulset` mode 不是偏好，是 loadbalancing resolver 需要 headless service 的穩定 DNS——`spec.mode` 一個欄位，operator 長出正確資源組合。
 - sampling 政策只存在 gateway CR 一個地方；後端地址只在 gateway 設一次，sidecar/agent 都不知道後端是誰——換後端不動任何業務部署。
-- **sidecar 的成本要誠實**：per-pod 線性增長。買到 per-pod 身分蓋章、per-service 客製隔離、短生命週期 process 的就近 flush（PHP-FPM 這類）。三個都用不上的服務，讓 SDK 直送 agent 層即可，模型允許混用。
 
 ### 2.2 Helm × Operator：所有權模型與搬家路徑（12 min，本部重點）
 
@@ -527,70 +526,27 @@ spec:
 2. **GitOps 健康判斷。** CR apply 成功 ≠ collector 起來了。ArgoCD/Flux 需要補 custom health check 看 CR 的 `status`，否則 sync green 但 pipeline 是壞的。
 3. **雙主人。** 上表最後兩行的紀律要寫進團隊規範：發現 operator 管的資源「一直被改回去」，正確反應是去改 CR，不是加大力度改 Deployment。
 
-### 2.3 版本治理：versions.txt vs 我們的自建 image（7 min）
+### 2.3 版本治理：versions.txt（2 min）
 
-Operator 的版本治理模型：[`versions.txt`](../versions.txt) 把 collector、各語言 agent、target allocator 的版本釘成一組——**發佈一個 operator 版本 = 發佈一整組驗證過的元件版本**。operator 升級時，upgrade routine（[`pkg/collector/upgrade/upgrade.go`](../pkg/collector/upgrade/upgrade.go)）主動把 cluster 裡所有 CR 遷到新 schema/預設值；`spec.upgradeStrategy: none` 和 `spec.managementState: unmanaged` 是逐 CR 的安全閥。
+每個 operator 版本預設搭配哪個 collector 版本、各語言 agent 哪個版本，都釘在 [versions.txt](https://github.com/open-telemetry/opentelemetry-operator/blob/main/versions.txt)——升 operator 就是換掉這整組預設值。兩條實務規則：**agent 不 pin、跟著 operator 走**；**collector 用自建 image 寫在 `spec.image`**，operator 的自動升級不會動它，版本節奏由自己的 image pipeline 負責。
 
-**但我們有一個跟這個模型直接衝突的現實：collector 跑自建 image（`ghcr.io/104corp/...` pin 0.142.0）。** 分析清楚這個取捨：
-
-- `spec.image` 明確指定時，operator 的自動版本升級**不會**動它——我們保留了自建 pipeline 的控制權，但也**放棄了「升 operator = 升全部 collector」的治理紅利**。collector 版本的治理責任仍在我們自己的 image pipeline。
-- 各語言 instrumentation agent 的 image 是另一回事：`Instrumentation` CR 不 pin 的話跟著 operator 預設走。**建議 agent 交給 operator 治理（不 pin），collector 維持自建**——兩者的客製需求不同（collector 有公司內部 exporter/processor 的需求，agent 沒有）。
-- 遺留問題排進 roadmap：自建 image 的升級節奏要跟 operator 版本對表（operator 解析 config 推導 port/RBAC，跨大版本的 config schema 變更兩邊要同步驗）。
-
-### 2.4 資料治理與 CR 粒度：merge vs replace、共用的邊界（10 min）
-
-**CR 的邊界 = 爆炸半徑的邊界**，這句話要落到可操作的判準。兩種 CR 的客製化語意天差地遠，決定了「什麼時候該拆 CR」：
-
-| | sidecar collector CR | Instrumentation CR |
-|---|---|---|
-| 客製化語意 | config **整份取代**，無欄位優先權 | env **逐項合併**（append-if-not-set） |
-| 「這個服務想不一樣」 | 只能 clone 一份 CR（lab [Stage 7](./lab/07-team-scoped-attributes.md) 的 `order-sidecar` 模式） | 多數情況**不用 clone**——值留在 app 自己的 env 就贏了（llm-guard 的 `EXCLUDED_URLS`） |
-| 拆分判準 | 需求會分岔的團隊，現在就拆 | 只有「endpoint/sampler 這種 CR 層欄位」要不一樣時才拆（§1.4 的兩份 CR 就是例子） |
-
-**先回答一個必被問的問題：sidecar CR 可以共用嗎？metadata 跟 namespace 不會出事嗎？**
-
-可以，機制上兩個疑慮都不成立：
-
-- **跨 namespace 引用支援**：annotation 值寫 `"opentelemetry/company-sidecar"` 即可（[`pkg/sidecar/podmutator.go:96-103`](../pkg/sidecar/podmutator.go)，`strings.Cut(ann, "/")`）；只有 `"true"` 才限定 Pod 自己的 namespace。
-- **config 整份 inline 進 `OTEL_CONFIG` env**（`--config=env:OTEL_CONFIG`，[`pkg/sidecar/pod.go:27-35`](../pkg/sidecar/pod.go)），不落地任何 ConfigMap——CR 放平台 namespace 不產生跨 namespace 資源依賴。
-- **per-pod metadata 是注入當下逐 Pod 計算的，不是從 CR 來的**：`k8s.namespace.name` 取 **Pod 的** namespace、pod/node 走 downward API、deployment/replicaset 從該 Pod 的 owner reference 反查（[`pkg/sidecar/attributes.go:29-47`](../pkg/sidecar/attributes.go)）。一份共用 CR，N 個 Pod 各自拿到正確身分。
-
-共用的真正約束是這三條，寫進共用範本的設計規範：
-
-1. **config 必須 namespace 中立**——exporter endpoint 用 FQDN（llm-guard 範例的 `span-lb.open-telemetry.svc.cluster.local` 就是），相對 service 名會在 Pod 的 namespace 解析。
-2. **避開 `spec.configMaps`/`spec.volumes`/secretKeyRef**——這些以 `LocalObjectReference` 在 **Pod 的 namespace** 解析，共用 CR 引用它們等於要求每個消費 namespace 自備同名資源。
-3. **config 無合併語意**——per-service 差異只能 clone（下表）。
-
-治理面的附註：webhook 用 operator 的權限讀 CR，**沒有「誰有資格引用哪份 CR」的授權檢查**——per-team CR 防不了被別的團隊誤指，防線是 annotation 的 code review。
-
-**Worked example（現場逐行驗證）：** 把 [llm-guard-api 的 sidecar CR](./lab/manifests/60-example-llm-guard-api-operator.yaml) 拿三條約束驗一遍——endpoint 全是 FQDN ✓、沒有 configMaps/volumes ✓、config 裡沒有一行是 llm-guard-api 專屬的（otlp/batch/memory_limiter/health_check 全是通用件）✓。結論：**這份 per-service CR 其實是共用範本的候選**，改個 name/namespace 就能升格成 `opentelemetry/company-sidecar`。唯一剩下的 per-service 分岔維度是 sizing（`resources`、`GOMEMLIMIT` 在 spec 上、整份取代）——解法是平台提供幾檔尺寸的範本（S/M/L），而不是每服務 clone 一份。這個例子把判準講活了：**拆 CR 的理由必須是「config 內容分岔」，而不是「每個服務習慣性自帶一份」——後者正是我們現在 Helm values 時代的慣性。**
-
-資料政策放 pipeline，不放信任裡——遮罩做在 collector processor，資料出 cluster 前已處理。選型法則：固定 key/value 用 `attributes`；條件、regex、跨欄位才上 `transform`（OTTL）；合規更嚴用 `delete_key`。搭配 RBAC：平台擁有 gateway/agent/Instrumentation CR，業務團隊只有自己 namespace 的 annotation 權（進階：自己的 sidecar CR）。
-
-兩種 processor 各一段（出自 lab [Stage 7 的 order-sidecar CR](./lab/manifests/50-order-sidecar-attributes.yaml)）：
-
-```yaml
-processors:
-  attributes/order_team:           # 固定標籤：attributes processor 就夠
-    actions:
-      - { key: team,        value: "order-team", action: insert }  # insert = 不覆蓋既有值
-      - { key: cost_center, value: "CC-4821",    action: insert }
-  transform/order_team:            # 條件 + regex 遮罩：才需要 OTTL
-    trace_statements:
-      - context: span
-        statements:
-          - replace_pattern(attributes["db.statement"],
-              "(?i)VALUES\\s*\\([^)]*\\)", "VALUES (***redacted***)")
-            where attributes["db.statement"] != nil
-```
-
-一條實測教訓帶過（§3.1 還會回收）：Hibernate 產小寫 `values`，沒加上面那個 `(?i)` 的遮罩規則**靜默不匹配**——語法全對、collector 不報錯、資料照漏。OTTL 政策上線前要拿真實流量驗證命中率。
-
-### 2.5 兩條延伸路：TargetAllocator 與 OpAMP（6 min）
+### 2.4 兩條延伸路：TargetAllocator 與 OpAMP（8 min）
 
 **TargetAllocator——我們的 ServiceMonitor 資產有現成的收編路。** 現況 metrics 走 Prometheus Operator 生態（llm-guard 的 values 裡就有 serviceMonitors/prometheusRules）。若未來 metrics 也要進 OTel 管線，TA 的 `prometheusCR.enabled` 直接認得現有 ServiceMonitor/PodMonitor——**各團隊已寫好的 monitor 一個都不用改**，TA 負責把 scrape target 用一致性雜湊分配到多個 collector 副本。不是今天的行動項，但它決定了「metrics 遷移」不需要另起爐灶。
 
-**OpAMP——多環境的控制面選項。** 我們的 namespace 命名（`l-`/`s-`/`p-`）顯示至少三套環境。`OpAMPBridge` 在每個 cluster 跑一個 bridge，把「該 cluster 裡 operator 管的所有 collector」代理給遠端控制面：回報 effective config、接受下推（回寫 CR，滾動更新交回 operator）、`componentsAllowed` 當白名單安全閥。lab [Stage 6](./lab/06-opamp-remote-version-upgrade.md) 實測過不碰 kubectl 遠端改 `spec.image` 完成升級。架構定位要講清楚：**它跟 GitOps 是競合關係**——同一份 CR 不能同時被 ArgoCD 和 OpAMP server 當 source of truth，選了 OpAMP 下推的欄位就要從 Git 管理範圍拿掉，否則兩個控制面互相打架。多環境如果 GitOps 已經順，OpAMP 的增量價值在「秒級動態調參」（臨時調 sampling 率救火）而不是常規變更。
+**OpAMP——多環境的控制面選項。** 我們的 namespace 命名（`l-`/`s-`/`p-`）顯示至少三套環境。`OpAMPBridge` 在每個 cluster 跑一個 bridge（operator 自己 reconcile 出來的 Deployment），把「該 cluster 裡 operator 管的 collector」代理給遠端控制面：回報身分、健康、effective config，接受下推。關鍵設計是**下推不繞過 operator**：bridge 收到 RemoteConfig 後做的事是「回寫 CR」（[`cmd/operator-opamp-bridge/internal/operator/client.go`](../cmd/operator-opamp-bridge/internal/operator/client.go) 的 `Apply` → `update`），接下來仍是 operator 的 reconcile 完成滾動更新——CR 從頭到尾是 single source of truth。
+
+三個設定要點（lab [Stage 5](./lab/05-opamp-bridge-control-plane.md)/[Stage 6](./lab/06-opamp-remote-version-upgrade.md) 實測）：
+
+- **collector 要 opt-in，而且有兩個等級**：`opentelemetry.io/opamp-managed: "true"` 可讀可寫（bridge 回報它，server 也能下推修改；值也可以填 bridge 名字，多 bridge 時指定歸屬）；`opentelemetry.io/opamp-reporting: "true"` 唯讀（回報給控制面看，bridge 明確拒絕任何下推修改，[`client.go:157-165`](../cmd/operator-opamp-bridge/internal/operator/client.go)）。兩個 label 都沒貼的 collector，bridge 完全看不見。中央 gateway 貼 managed、各服務 sidecar CR 貼 reporting，就是「可視性全拿、寫入權限收窄」的現成治理工具。
+- **RBAC 要自己補**：operator 替 bridge 建 ServiceAccount，但不給「讀 collector CR」的權限——漏了就是 bridge 連得上、控制面一個 collector 都看不到（log 出現 `forbidden`、health=false）。
+- **完整報告只送一次**：bridge 只在連線建立當下送 `AgentDescription` + `EffectiveConfig`，之後的 heartbeat 只帶 health；控制面要即時看到設定變化，重送機制得自己處理。
+
+守門員只有 `componentsAllowed` 白名單，而它**只檢查 `spec.config` 的 receivers/processors/exporters**——`spec.image`/`spec.replicas` 這些部署層欄位完全不在檢查範圍。雙面刃：遠端版本升級因此走得通（Stage 6 全程不碰 kubectl 完成滾動升級）；但也代表 remote config 能改的是**整份 spec**，控制面自身的安全要按這個等級設防。另外注意被白名單擋下時是**靜默失敗**：檢查在 bridge 端，server 端不知道被擋、log 照樣顯示成功——叢集什麼都沒發生。
+
+兩個延伸備註。**自建控制面的門檻不高**——官方 [opamp-go](https://github.com/open-telemetry/opamp-go) 把 WebSocket、握手、訊息編解碼全包掉，server 端只實作 OnMessage callback（lab 的 [opamp-server](./lab/apps/opamp-server/main.go) 全部 265 行，協議處理不到 20 行，其餘都是業務邏輯）。**K8s 之外的 collector 也接得進同一個控制面**——VM／裸機上的 collector 由 [OpAMP Supervisor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/cmd/opampsupervisor) 貼身管理（寫 config.yaml、watchdog 重啟、驗簽升級 binary），對 server 而言它跟 bridge 是同一種 agent——控制面不用分家。
+
+架構定位要講清楚：**它跟 GitOps 是競合關係**——同一份 CR 不能同時被 ArgoCD 和 OpAMP server 當 source of truth，選了 OpAMP 下推的欄位就要從 Git 管理範圍拿掉，否則兩個控制面互相打架。多環境如果 GitOps 已經順，OpAMP 的增量價值在「秒級動態調參」（臨時調 sampling 率救火）而不是常規變更。
 
 ---
 
@@ -647,8 +603,7 @@ processors:
 | 2.1 拓撲分析 | lab [Stage 2](./lab/02-collector-gateway-and-loadbalancer.md)、`pkg/sidecar/attributes.go` | lab Stage 2 |
 | 2.2 Helm 所有權模型 | lab [Stage 0](./lab/00-setup.md)、llm-guard-api 範例 | — |
 | 2.3 版本治理 | classroom [第 11 章](./11-upgrade-and-change.md)、`pkg/collector/upgrade/` | — |
-| 2.4 CR 粒度 | lab [Stage 7](./lab/07-team-scoped-attributes.md)、llm-guard env 合併註解 | lab Stage 7（選放） |
-| 2.5 TA / OpAMP | lab [Stage 5](./lab/05-opamp-bridge-control-plane.md)/[6](./lab/06-opamp-remote-version-upgrade.md) | lab Stage 6（選放） |
+| 2.4 TA / OpAMP | lab [Stage 5](./lab/05-opamp-bridge-control-plane.md)/[6](./lab/06-opamp-remote-version-upgrade.md) | lab Stage 6（選放） |
 | 3.1 失效模式 | lab 各 stage 實測 + `failurePolicy` 分析 | — |
 
 ## 附錄 B：想深入時往哪走
