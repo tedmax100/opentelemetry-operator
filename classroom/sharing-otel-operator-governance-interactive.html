@@ -1,0 +1,1954 @@
+<title>從 CR 到叢集：OpenTelemetry Operator 治理實驗室</title>
+<style>
+  :root {
+    --ground: #eef1f6;
+    --surface: #ffffff;
+    --surface-raised: #f6f8fb;
+    --border: #d7dce6;
+    --text: #131a26;
+    --text-dim: #55617a;
+    --text-faint: #8a93a8;
+    --accent-source: #a8690c;
+    --accent-source-soft: #f4e4cc;
+    --accent-result: #0b8a7b;
+    --accent-result-soft: #d7f0ec;
+    --state-ok: #1f8a4c;
+    --state-ok-soft: #dcf1e3;
+    --state-warn: #a9720b;
+    --state-warn-soft: #f5e8cf;
+    --state-danger: #b8352f;
+    --state-danger-soft: #f7dedc;
+    --console-ground: #0f1524;
+    --console-surface: #16203a;
+    --console-border: #2c3a5c;
+    --console-text: #dee5f3;
+    --console-text-dim: #8b96b8;
+    --shadow: 0 1px 2px rgba(20, 26, 40, 0.06), 0 8px 24px rgba(20, 26, 40, 0.06);
+    --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0c1220;
+      --surface: #121a2c;
+      --surface-raised: #17213670;
+      --border: #2a3450;
+      --text: #e4e8f2;
+      --text-dim: #a3aec8;
+      --text-faint: #6d7893;
+      --accent-source: #e2a04c;
+      --accent-source-soft: #3a2c15;
+      --accent-result: #45c9b8;
+      --accent-result-soft: #123330;
+      --state-ok: #4fc07c;
+      --state-ok-soft: #123322;
+      --state-warn: #e2a04c;
+      --state-warn-soft: #3a2c15;
+      --state-danger: #e0716b;
+      --state-danger-soft: #3a1a18;
+      --console-ground: #070b14;
+      --console-surface: #101828;
+      --console-border: #263252;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0c1220; --surface: #121a2c; --surface-raised: #17213670; --border: #2a3450;
+    --text: #e4e8f2; --text-dim: #a3aec8; --text-faint: #6d7893;
+    --accent-source: #e2a04c; --accent-source-soft: #3a2c15;
+    --accent-result: #45c9b8; --accent-result-soft: #123330;
+    --state-ok: #4fc07c; --state-ok-soft: #123322;
+    --state-warn: #e2a04c; --state-warn-soft: #3a2c15;
+    --state-danger: #e0716b; --state-danger-soft: #3a1a18;
+    --console-ground: #070b14; --console-surface: #101828; --console-border: #263252;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.35);
+  }
+  :root[data-theme="light"] {
+    --ground: #eef1f6; --surface: #ffffff; --surface-raised: #f6f8fb; --border: #d7dce6;
+    --text: #131a26; --text-dim: #55617a; --text-faint: #8a93a8;
+    --accent-source: #a8690c; --accent-source-soft: #f4e4cc;
+    --accent-result: #0b8a7b; --accent-result-soft: #d7f0ec;
+    --state-ok: #1f8a4c; --state-ok-soft: #dcf1e3;
+    --state-warn: #a9720b; --state-warn-soft: #f5e8cf;
+    --state-danger: #b8352f; --state-danger-soft: #f7dedc;
+    --console-ground: #0f1524; --console-surface: #16203a; --console-border: #2c3a5c;
+    --shadow: 0 1px 2px rgba(20, 26, 40, 0.06), 0 8px 24px rgba(20, 26, 40, 0.06);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 920px; margin: 0 auto; padding: 0 24px 120px; }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 72px 24px 40px; max-width: 920px; margin: 0 auto; }
+  .kicker {
+    font-family: var(--font-mono); font-size: 12.5px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent-result); margin: 0 0 18px; display: flex; align-items: center; gap: 10px;
+  }
+  .kicker::before { content: ""; width: 22px; height: 1px; background: var(--accent-result); display: inline-block; }
+  h1 {
+    font-family: var(--font-display); font-weight: 500; font-size: clamp(32px, 5vw, 46px);
+    line-height: 1.18; margin: 0 0 16px; text-wrap: balance; letter-spacing: -0.01em;
+  }
+  .hero p.lede { font-size: 17px; color: var(--text-dim); max-width: 62ch; margin: 0 0 28px; }
+  .hero p.lede strong { color: var(--text); font-weight: 600; }
+
+  .axis-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 36px; }
+  @media (max-width: 620px) { .axis-row { grid-template-columns: 1fr; } }
+  .axis { border: 1px solid var(--border); background: var(--surface); border-radius: 3px; padding: 16px 18px; }
+  .axis .n { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint); }
+  .axis h3 { margin: 6px 0 6px; font-family: var(--font-display); font-weight: 500; font-size: 18px; }
+  .axis p { margin: 0; font-size: 14.5px; color: var(--text-dim); }
+
+  nav.toc { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 0 0; border-top: 1px solid var(--border); }
+  nav.toc a {
+    font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.03em; color: var(--text-dim);
+    text-decoration: none; border: 1px solid var(--border); padding: 6px 11px; border-radius: 999px;
+    background: var(--surface); transition: color .15s ease, border-color .15s ease;
+  }
+  nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent-result); border-color: var(--accent-result); }
+  nav.toc a:focus-visible { outline: 2px solid var(--accent-result); outline-offset: 2px; }
+  nav.toc .div { width: 100%; height: 0; }
+
+  /* ---------- sections ---------- */
+  section { margin: 64px 0; scroll-margin-top: 24px; }
+  section.minor { margin: 44px 0; }
+  section > .prose { max-width: 66ch; }
+  section > .prose.wide { max-width: 78ch; }
+  .eyebrow { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-faint); margin: 0 0 8px; }
+  h2 { font-family: var(--font-display); font-weight: 500; font-size: 27px; margin: 0 0 14px; text-wrap: balance; }
+  h3.sub { font-family: var(--font-display); font-weight: 500; font-size: 18px; margin: 28px 0 10px; color: var(--text); }
+  section > .prose p, section > .prose li { color: var(--text-dim); font-size: 15.5px; margin: 0 0 12px; }
+  section > .prose ul, section > .prose ol { padding-left: 22px; margin: 0 0 16px; }
+  section > .prose code, p code, li code, td code, dt code {
+    font-family: var(--font-mono); font-size: 0.88em; background: var(--surface-raised);
+    border: 1px solid var(--border); padding: 0.05em 0.4em; border-radius: 3px; color: var(--text);
+  }
+  .cite { font-family: var(--font-mono); font-size: 12px; color: var(--text-faint); }
+  hr.rule { border: none; border-top: 1px solid var(--border); margin: 64px 0; }
+
+  /* ---------- generic data table ---------- */
+  .dtable { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .dtable th, .dtable td { border: 1px solid var(--border); padding: 10px 12px; text-align: left; vertical-align: top; }
+  .dtable th { background: var(--surface-raised); font-weight: 600; font-size: 12.5px; color: var(--text-dim); }
+  .dtable td { color: var(--text-dim); font-size: 13px; }
+  .dtable td.k { font-weight: 600; color: var(--text); font-family: var(--font-mono); font-size: 12.5px; white-space: nowrap; }
+  .dtable td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .table-scroll { overflow-x: auto; }
+
+  /* ---------- static code snippet ---------- */
+  .snippet {
+    font-family: var(--font-mono); font-size: 12.5px; line-height: 1.7;
+    background: var(--surface-raised); border: 1px solid var(--border); border-radius: 4px;
+    padding: 12px 14px; overflow-x: auto; color: var(--text); white-space: pre; margin: 14px 0;
+  }
+  .snippet .c { color: var(--text-faint); }
+  .snippet .hl { color: var(--accent-result); font-weight: 600; }
+  .snippet-cap { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); margin: 18px 0 -6px; }
+
+  /* ---------- callouts ---------- */
+  .callout { border-left: 3px solid var(--border); padding: 10px 16px; margin: 16px 0; font-size: 14px; color: var(--text-dim); background: var(--surface-raised); border-radius: 0 4px 4px 0; }
+  .callout.danger { border-left-color: var(--state-danger); }
+  .callout.danger strong { color: var(--state-danger); }
+  .callout.warn { border-left-color: var(--state-warn); }
+  .callout.warn strong { color: var(--state-warn); }
+  .callout strong { color: var(--text); }
+
+  /* ---------- four-CR plain-language map ---------- */
+  .plain-map { margin: 18px 0 28px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-raised); overflow: hidden; }
+  .plain-row { display: grid; grid-template-columns: 200px 1fr; gap: 16px; padding: 12px 18px; border-top: 1px solid var(--border); align-items: baseline; }
+  .plain-row:first-child { border-top: none; }
+  @media (max-width: 620px) { .plain-row { grid-template-columns: 1fr; gap: 4px; } }
+  .plain-map dt { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--accent-result); }
+  .plain-map dd { margin: 0; font-size: 14px; color: var(--text-dim); }
+
+  /* ---------- four-CR cards ---------- */
+  .cr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 20px 0; }
+  @media (max-width: 620px) { .cr-grid { grid-template-columns: 1fr; } }
+  .cr-card { border: 1px solid var(--border); background: var(--surface); border-radius: 5px; padding: 16px 18px; }
+  .cr-card .name { font-family: var(--font-mono); font-size: 13px; color: var(--accent-result); margin: 0 0 6px; }
+  .cr-card h4 { margin: 0 0 8px; font-family: var(--font-display); font-size: 17px; font-weight: 500; }
+  .cr-card p { margin: 0 0 6px; font-size: 13.5px; color: var(--text-dim); }
+  .cr-card p:last-child { margin-bottom: 0; }
+  .cr-card .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); }
+
+  /* ---------- numbered / phase list ---------- */
+  ol.phases { list-style: none; padding: 0; margin: 16px 0; counter-reset: phase; }
+  ol.phases li {
+    counter-increment: phase; position: relative; padding: 4px 0 16px 40px; font-size: 14.5px; color: var(--text-dim);
+    border-left: 1px solid var(--border); margin-left: 11px;
+  }
+  ol.phases li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  ol.phases li::before {
+    content: counter(phase); position: absolute; left: -12px; top: 2px; width: 22px; height: 22px;
+    border-radius: 50%; background: var(--accent-result-soft); color: var(--accent-result); font-family: var(--font-mono);
+    font-size: 11.5px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+  }
+  ol.phases li strong { color: var(--text); }
+
+  /* ---------- redlines ---------- */
+  .redline { display: flex; gap: 12px; padding: 14px 0; border-top: 1px solid var(--border); }
+  .redline:first-of-type { border-top: none; }
+  .redline .tag { font-family: var(--font-mono); font-size: 11px; color: var(--state-danger); border: 1px solid var(--state-danger); padding: 2px 8px; border-radius: 999px; height: fit-content; white-space: nowrap; }
+  .redline p { margin: 0; font-size: 14.5px; color: var(--text-dim); }
+  .redline strong { color: var(--text); }
+
+  /* ---------- lab console ---------- */
+  .lab { margin-top: 28px; border: 1px solid var(--console-border); border-radius: 6px; background: var(--console-surface); box-shadow: var(--shadow); overflow: hidden; }
+  .lab-head { padding: 18px 22px 16px; border-bottom: 1px solid var(--console-border); background: linear-gradient(180deg, var(--console-ground), var(--console-surface)); }
+  .lab-head .eyebrow { color: var(--accent-result); opacity: 0.9; }
+  .lab-head h3 { margin: 4px 0 6px; font-family: var(--font-display); font-weight: 500; font-size: 19px; color: var(--console-text); }
+  .lab-head .goal { margin: 0; font-size: 13.5px; color: var(--console-text-dim); max-width: 70ch; }
+
+  .lab-body { display: grid; grid-template-columns: 260px 1fr; gap: 0; }
+  @media (max-width: 700px) { .lab-body { grid-template-columns: 1fr; } }
+
+  .lab-controls { padding: 20px 22px; border-right: 1px solid var(--console-border); display: flex; flex-direction: column; gap: 18px; }
+  @media (max-width: 700px) { .lab-controls { border-right: none; border-bottom: 1px solid var(--console-border); } }
+
+  .ctrl-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--console-text-dim); margin: 0 0 8px; display: block; }
+  .seg { display: flex; flex-direction: column; gap: 5px; }
+  .seg button {
+    font-family: var(--font-mono); font-size: 13px; text-align: left; padding: 8px 12px; background: transparent;
+    border: 1px solid var(--console-border); color: var(--console-text-dim); border-radius: 4px; cursor: pointer; transition: all .12s ease;
+  }
+  .seg button:hover { border-color: var(--accent-result); color: var(--console-text); }
+  .seg button[aria-pressed="true"] { background: var(--accent-result-soft); border-color: var(--accent-result); color: var(--accent-result); font-weight: 600; }
+  .seg button:focus-visible { outline: 2px solid var(--accent-result); outline-offset: 1px; }
+  .seg.row { flex-direction: row; flex-wrap: wrap; }
+  .seg.row button { flex: 1 1 auto; text-align: center; }
+
+  .check-list { display: flex; flex-direction: column; gap: 9px; }
+  .check-item { display: flex; align-items: center; gap: 9px; font-family: var(--font-mono); font-size: 13px; color: var(--console-text-dim); }
+  .check-item input[type="checkbox"] { accent-color: var(--accent-source); width: 15px; height: 15px; cursor: pointer; }
+  .check-item.on { color: var(--console-text); }
+
+  .lab-output { padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .readout {
+    font-family: var(--font-mono); font-size: 12.5px; line-height: 1.7; background: var(--console-ground);
+    border: 1px solid var(--console-border); border-radius: 4px; padding: 12px 14px; overflow-x: auto; color: var(--console-text); white-space: pre;
+  }
+  .readout .k8s-kind { color: var(--accent-result); }
+  .readout .comment, .readout .muted { color: var(--console-text-dim); }
+  .readout .flag { color: var(--accent-source); }
+
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 560px) { .split { grid-template-columns: 1fr; } }
+  .pane-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 6px; display: flex; align-items: center; gap: 6px; }
+  .pane-label.source { color: var(--accent-source); }
+  .pane-label.result { color: var(--accent-result); }
+  .pane-label::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: inline-block; }
+
+  table.port-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 12.5px; }
+  table.port-table th, table.port-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--console-border); color: var(--console-text); }
+  table.port-table th { color: var(--console-text-dim); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+  table.port-table td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  table.port-table tr.empty td { color: var(--console-text-dim); font-style: italic; }
+
+  .lab-note { font-size: 12.5px; color: var(--console-text-dim); line-height: 1.6; border-top: 1px solid var(--console-border); padding-top: 12px; }
+  .lab-note .cite { color: var(--text-faint); }
+  .lab-note strong { color: var(--console-text); font-weight: 600; }
+
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid transparent; }
+  .pill.ok { background: var(--state-ok-soft); color: var(--state-ok); border-color: currentColor; }
+  .pill.warn { background: var(--state-warn-soft); color: var(--state-warn); border-color: currentColor; }
+  .pill.danger { background: var(--state-danger-soft); color: var(--state-danger); border-color: currentColor; }
+
+  .status-grid { display: flex; flex-direction: column; gap: 10px; }
+  .status-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--console-text-dim); font-family: var(--font-mono); }
+  .status-row .lbl { color: var(--console-text); }
+
+  .flow { display: flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 13px; flex-wrap: wrap; }
+  .flow .node { border: 1px solid var(--console-border); border-radius: 4px; padding: 10px 14px; background: var(--console-ground); color: var(--console-text-dim); }
+  .flow .node.active { border-color: var(--accent-result); color: var(--accent-result); background: var(--accent-result-soft); font-weight: 600; }
+  .flow .arrow { color: var(--console-text-dim); }
+  .flow .arrow.active { color: var(--accent-result); }
+
+  /* static topology diagram (light theme, in prose) */
+  .topo { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 12.5px; flex-wrap: wrap; margin: 16px 0; }
+  .topo .node { border: 1px solid var(--border); border-radius: 4px; padding: 9px 13px; background: var(--surface); color: var(--text-dim); }
+  .topo .node.warn { border-color: var(--state-warn); color: var(--state-warn); background: var(--state-warn-soft); }
+  .topo .node.ok { border-color: var(--accent-result); color: var(--accent-result); background: var(--accent-result-soft); }
+  .topo .arrow { color: var(--text-faint); }
+
+  /* trace fragmentation lab */
+  .trace-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .trace-col { border: 1px solid var(--console-border); border-radius: 4px; padding: 10px; }
+  .trace-col h4 { margin: 0 0 8px; font-family: var(--font-mono); font-size: 11px; color: var(--console-text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+  .trace-dots { display: flex; flex-wrap: wrap; gap: 6px; }
+  .dot { width: 16px; height: 16px; border-radius: 50%; display: inline-block; }
+  .dot.a { background: var(--accent-source); }
+  .dot.b { background: var(--accent-result); }
+  .dot.c { background: #7b8fd6; }
+
+  /* env merge lab */
+  .env-rows { display: flex; flex-direction: column; gap: 8px; }
+  .env-row { display: grid; grid-template-columns: 22px 1fr 1fr; gap: 10px; align-items: center; padding: 9px 10px; border: 1px solid var(--console-border); border-radius: 4px; background: var(--console-ground); transition: all .15s ease; }
+  .env-row.winner { border-color: var(--accent-result); background: var(--accent-result-soft); }
+  .env-row .layer-name { font-family: var(--font-mono); font-size: 12px; color: var(--console-text-dim); }
+  .env-row.winner .layer-name { color: var(--accent-result); font-weight: 600; }
+  .env-row input[type="checkbox"] { accent-color: var(--accent-source); width: 15px; height: 15px; cursor: pointer; }
+  .env-row input[type="text"] {
+    font-family: var(--font-mono); font-size: 12.5px; background: var(--console-ground); border: 1px solid var(--console-border);
+    color: var(--console-text); padding: 7px 9px; border-radius: 4px; width: 100%;
+  }
+  .env-row input[type="text"]:disabled { opacity: 0.35; }
+  .env-row input[type="text"]:focus-visible { outline: 2px solid var(--accent-result); outline-offset: 1px; }
+
+  .resolved-banner { font-family: var(--font-mono); font-size: 13px; padding: 12px 14px; border-radius: 4px; border: 1px solid var(--accent-result); background: var(--accent-result-soft); color: var(--accent-result); }
+  .resolved-banner.fallback { border-color: var(--console-border); background: var(--console-ground); color: var(--console-text-dim); }
+  .resolved-banner.warn { border-color: var(--state-warn); background: var(--state-warn-soft); color: var(--state-warn); }
+
+  /* closing */
+  .close-block { border: 1px solid var(--border); border-radius: 6px; background: var(--surface); padding: 30px 32px; }
+  .close-block ol { list-style: none; padding: 0; margin: 0; counter-reset: cp; }
+  .close-block li { counter-increment: cp; padding: 16px 0; border-top: 1px solid var(--border); font-size: 15.5px; color: var(--text-dim); }
+  .close-block li:first-child { border-top: none; padding-top: 0; }
+  .close-block li::before { content: counter(cp) "."; font-family: var(--font-mono); color: var(--accent-result); margin-right: 8px; font-weight: 700; }
+  .close-block li strong { color: var(--text); }
+
+  .open-q { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+  .open-q .q { font-size: 14px; color: var(--text-dim); padding-left: 16px; border-left: 2px solid var(--border); }
+
+  footer { max-width: 920px; margin: 0 auto; padding: 40px 24px 0; border-top: 1px solid var(--border); font-size: 13px; color: var(--text-faint); }
+
+  ::selection { background: var(--accent-result-soft); color: var(--accent-result); }
+</style>
+
+<div class="hero">
+  <p class="kicker">OpenTelemetry Operator · 治理機制</p>
+  <h1>從 CR 到叢集：宣告如何變成事實</h1>
+  <p class="lede">
+    給熟悉 Kubernetes Operator Pattern 的架構師：不講 CRD / Reconcile / Webhook 是什麼，直接進設計取捨與七個可以動手操作的機制。
+    出發點只有兩句話：<strong>接入成本壓到幾行 annotation，覆蓋率才可能趨近 100%</strong>；
+    <strong>政策收斂到 CR，由控制迴圈強制，而不是靠人記得改設定</strong>。
+  </p>
+
+  <div class="axis-row">
+    <div class="axis">
+      <p class="n">問題一 · 擴散</p>
+      <h3>接不上</h3>
+      <p>靠人手動接 SDK，覆蓋率永遠殘缺；agent 版本升級變成五十個 repo 五十個 PR。</p>
+    </div>
+    <div class="axis">
+      <p class="n">問題二 · 治理</p>
+      <h3>管不動</h3>
+      <p>Collector 設定散落在各服務的 Helm values 裡，想全公司調一次 sampling，等於動所有人的部署。</p>
+    </div>
+  </div>
+
+  <nav class="toc" aria-label="本頁章節">
+    <a href="#four-cr">四個 CR</a>
+    <a href="#decisions">三個設計決策</a>
+    <a href="#lab-mode">spec.mode</a>
+    <a href="#lab-ports">port 推導</a>
+    <a href="#inject-chain">注入語意</a>
+    <a href="#lab-env">env 合併</a>
+    <a href="#llm-guard">llm-guard-api 解剖</a>
+    <a href="#adopt-matrix">存量矩陣</a>
+    <a href="#lab-endpoint">endpoint 陷阱</a>
+    <a href="#redlines">紅線</a>
+    <a href="#topology">拓撲分析</a>
+    <a href="#lab-trace">trace routing</a>
+    <a href="#helm-model">Helm 所有權</a>
+    <a href="#versioning">版本治理</a>
+    <a href="#granularity">CR 粒度</a>
+    <a href="#matrix">失效模式</a>
+    <a href="#rollout">落地路徑</a>
+  </nav>
+</div>
+
+<div class="wrap">
+
+  <!-- ============ 0.1 四個 CR ============ -->
+  <section id="four-cr">
+    <div class="prose wide">
+      <p class="eyebrow">開場 · 治理單元</p>
+      <h2>四個 CR：各自治理什麼，設計性質怎麼影響用法</h2>
+      <p>先講白話版，四句話對應四個 CR，後面的卡片再展開細節：</p>
+    </div>
+    <dl class="plain-map">
+      <div class="plain-row">
+        <dt>OpenTelemetryCollector</dt>
+        <dd>規範一台 OTel Collector 要怎麼被部署、部署成什麼 mode（deployment/daemonset/statefulset/sidecar）。</dd>
+      </div>
+      <div class="plain-row">
+        <dt>Instrumentation</dt>
+        <dd>OTel SDK 的設定範本，決定各語言的 auto-instrument 要怎麼注入、注入什麼參數——它自己不部署任何東西。</dd>
+      </div>
+      <div class="plain-row">
+        <dt>OpAMPBridge</dt>
+        <dd>讓遠端控制面能治理、管理叢集裡這些 Collector——下指令改設定、觸發滾動更新，都透過它中繼。</dd>
+      </div>
+      <div class="plain-row">
+        <dt>TargetAllocator</dt>
+        <dd>把 Prometheus 的 scrape target 分配給多個 Collector 副本，讓多副本收 metrics 時不會重複抓。</dd>
+      </div>
+    </dl>
+    <div class="cr-grid">
+      <div class="cr-card">
+        <p class="name">OpenTelemetryCollector <span class="lbl">v1beta1 · 唯一 stable</span></p>
+        <h4>管線拓撲與資料政策</h4>
+        <p>Sampling、遮罩、路由、資源上限。<code>spec.mode</code> 驅動資源組合；<code>spec.config</code> 透傳（決策三）。</p>
+        <p class="lbl">對應資產</p>
+        <p>中央 collector 的目的地；各服務手掛的 sidecar。</p>
+      </div>
+      <div class="cr-card">
+        <p class="name">Instrumentation <span class="lbl">v1alpha1</span></p>
+        <h4>接入標準</h4>
+        <p>Agent 版本、endpoint、propagator、sampler。<strong>純範本，不建立任何資源</strong>；env 逐項合併——這個性質是 RBAC 設計的支點：可以放平台 namespace、業務團隊唯讀，Pod 用跨 namespace annotation 引用。</p>
+        <p class="lbl">對應資產</p>
+        <p>取代各服務 values 裡那串 <code>OTEL_*</code> env。</p>
+      </div>
+      <div class="cr-card">
+        <p class="name">OpAMPBridge <span class="lbl">v1alpha1</span></p>
+        <h4>Collector 群的遠端控制面</h4>
+        <p>Server 下推的不是 collector config，而是 CR 變更——bridge 改寫 CR、operator 照常 reconcile。控制面疊在 operator 之上，不是繞過它，<code>componentsAllowed</code> 白名單、Git diff 這些既有防線仍然有效。</p>
+        <p class="lbl">對應資產</p>
+        <p>多環境（l- / s- / p-）的控制面選項。</p>
+      </div>
+      <div class="cr-card">
+        <p class="name">TargetAllocator <span class="lbl">v1alpha1 · 可獨立或內嵌</span></p>
+        <h4>Prometheus scrape target 分配</h4>
+        <p>四個裡治理色彩最淡，價值在遷移路徑：<code>prometheusCR.enabled</code> 直接認得現有 ServiceMonitor / PodMonitor，收編不需要重寫任何一份。</p>
+        <p class="lbl">對應資產</p>
+        <p>現有的 serviceMonitors 資產。</p>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ 0.2 三個設計決策 ============ -->
+  <section id="decisions">
+    <div class="prose wide">
+      <p class="eyebrow">開場 · 不讀 code 不會知道的三件事</p>
+      <h2>三個對治理有直接後果的設計決策</h2>
+      <p>跳過 operator 101，只講三個決定「一個政策下推之後會發生什麼」的設計。</p>
+
+      <p class="eyebrow" style="margin-top:28px;">機制一 · 收斂速度</p>
+      <h3 class="sub" style="margin-top:0;">決策一：兩個執行點，兩種政策生效語意</h3>
+      <p>
+        Operator 直接擁有的 workload（gateway/agent）走 reconcile 迴圈，持續運作；改 CR 立刻觸發 rolling update，手改被改回。
+        Webhook 注入的東西（sidecar/instrumentation）只在 Pod <strong>CREATE</strong> 那一刻生效一次（沒有 UPDATE）；
+        改 CR 之後，已經在跑的 Pod 與 CR 脫鉤——config 已經烤進去，要等該服務自己下一次部署才追得上。
+        治理後果：下推一個政策，兩類目標的收斂時間完全不同，平台需要量測「多少 % 已拿到新政策」，不能假設 apply 完就全部生效。
+      </p>
+    </div>
+
+    <div class="lab">
+      <div class="lab-head">
+        <p class="eyebrow">互動實驗</p>
+        <h3>同一次 CR 變更，四個目標各自多久才追上</h3>
+        <p class="goal">Gateway 走 reconcile 迴圈；三個服務都掛了 sidecar 注入，只在各自下一次部署（新 Pod CREATE）時才會拿到新設定。</p>
+      </div>
+      <div class="lab-body">
+        <div class="lab-controls">
+          <span class="ctrl-label">距離改這份 CR，已經過了</span>
+          <div class="seg row" id="converge-seg">
+            <button type="button" data-day="0" aria-pressed="true">T+0</button>
+            <button type="button" data-day="1" aria-pressed="false">+1 天</button>
+            <button type="button" data-day="3" aria-pressed="false">+3 天</button>
+            <button type="button" data-day="7" aria-pressed="false">+7 天</button>
+            <button type="button" data-day="14" aria-pressed="false">+14 天</button>
+            <button type="button" data-day="30" aria-pressed="false">+30 天</button>
+          </div>
+        </div>
+        <div class="lab-output">
+          <p class="pane-label result">四個目標的收斂狀態</p>
+          <div class="status-grid" id="converge-rows">
+            <div class="status-row"><span class="lbl">gateway-collector（operator 直接管理）</span><span id="converge-pill-gw"></span></div>
+            <div class="status-row"><span class="lbl">checkout-api（sidecar 注入，約每 2 天部署一次）</span><span id="converge-pill-checkout"></span></div>
+            <div class="status-row"><span class="lbl">notification-worker（sidecar 注入，約每 9 天部署一次）</span><span id="converge-pill-notify"></span></div>
+            <div class="status-row"><span class="lbl">legacy-billing（sidecar 注入，近 60 天沒有部署）</span><span id="converge-pill-legacy"></span></div>
+          </div>
+          <div class="resolved-banner" id="converge-coverage"></div>
+          <div class="lab-note">
+            Mutating webhook 只註冊在 Pod 的 <strong>CREATE</strong> 事件——沒有任何迴圈會主動幫已存在的 Pod 補推新設定。
+            像 legacy-billing 這種很少重新部署的服務，會在「政策已下推」和「Pod 實際拿到新政策」之間留下一個沒有上限的落差期。
+            <span class="cite">internal/webhook/podmutation/webhookhandler.go</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="prose wide">
+      <h3 class="sub">決策二：<code>failurePolicy=ignore</code>——注入是 best-effort</h3>
+      <p>
+        Operator webhook 不可用時，Pod 照建、只是安靜地沒被注入。設計上合理（observability 元件不該擋業務部署），
+        但意味著<strong>覆蓋率是要量測的，不是假設的</strong>——需要常態盤點「有 annotation 但沒有 initContainer 的 Pod」。
+        這個取捨不是宿命：operator chart 的 <code>admissionWebhooks.pods.failurePolicy</code> 可以翻轉成 <code>Fail</code>，
+        親手操作它對 Pod 建立的影響見下方機制五的實驗。
+      </p>
+
+      <h3 class="sub">決策三：<code>spec.config</code> 是透傳設計</h3>
+      <p>
+        CR 的 <code>spec.config</code> 就是 collector 設定本體；operator 解析它來推導 Service port、必要的 RBAC，但不改寫語意。
+        這是遷移成本低的機制根源——現有 Helm chart values 裡的 collector config 可以幾乎原封不動搬進 CR。
+        同時 <code>spec.image</code> 接受任意 image reference，自建 image、<code>GOMEMLIMIT</code> 這類 runtime env 照掛。
+      </p>
+    </div>
+
+    <div class="snippet-cap">最小 CR</div>
+    <div class="snippet">apiVersion: opentelemetry.io/v1beta1
+<span class="c">kind: OpenTelemetryCollector</span>
+metadata:
+  name: gateway
+spec:
+  mode: statefulset
+  replicas: 2
+  image: <span class="hl">ghcr.io/104corp/otel-collector/collector-contrib:0.142.0</span>  <span class="c"># 自建 image 照用</span>
+  config:                        <span class="c"># ← 原汁原味的 collector config，從 Helm values 直接搬</span>
+    receivers: { otlp: { protocols: { grpc: {}, http: {} } } }
+    exporters: { debug: {} }
+    service:
+      pipelines:
+        traces: { receivers: [otlp], exporters: [debug] }</div>
+  </section>
+
+  <!-- ============ LAB 1: mode ============ -->
+  <section id="lab-mode">
+    <div class="prose">
+      <p class="eyebrow">機制二 · 執行點</p>
+      <h2><code>spec.mode</code> 決定 operator 長出什麼</h2>
+      <p>
+        同一份 <code>OpenTelemetryCollector</code> CR，換一個 <code>mode</code> 字串，operator 在 reconcile 迴圈裡組出來的資源組合完全不同。
+        <code>sidecar</code> mode 的特殊性：它讓同一個 Kind 同時活在兩種執行點（決策一）——前三種 mode 走 reconcile，sidecar mode 走 webhook。
+      </p>
+    </div>
+
+    <div class="lab">
+      <div class="lab-head">
+        <p class="eyebrow">互動實驗</p>
+        <h3>切換 mode，看 reconcile 迴圈實際建出什麼</h3>
+        <p class="goal">CR 名稱固定為 <code>gateway</code>，namespace 為 <code>default</code>。</p>
+      </div>
+      <div class="lab-body">
+        <div class="lab-controls">
+          <div>
+            <span class="ctrl-label">spec.mode</span>
+            <div class="seg" id="mode-seg" role="group" aria-label="選擇 mode">
+              <button type="button" data-mode="deployment" aria-pressed="true">deployment</button>
+              <button type="button" data-mode="daemonset" aria-pressed="false">daemonset</button>
+              <button type="button" data-mode="statefulset" aria-pressed="false">statefulset</button>
+              <button type="button" data-mode="sidecar" aria-pressed="false">sidecar</button>
+            </div>
+          </div>
+        </div>
+        <div class="lab-output">
+          <p class="pane-label result">kubectl get 產出</p>
+          <div class="readout" id="mode-readout"></div>
+          <div class="lab-note" id="mode-note"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ LAB 2: ports ============ -->
+  <section id="lab-ports">
+    <div class="prose">
+      <p class="eyebrow">機制三 · 透傳設計的延伸</p>
+      <h2>Pipeline 接了什麼 receiver，Service 就開什麼 port</h2>
+      <p>
+        Operator 不替 config 內容建型別，只掃 <code>service.pipelines</code> 裡實際接線的 receiver，
+        照內建的 port mapping 表把 Service port 湊出來。拿掉一個 receiver，下一輪 reconcile 那個 port 就消失——
+        不是「不用宣告 port」，是「宣告 pipeline 就等於宣告 port」。
+      </p>
+    </div>
+
+    <div class="lab">
+      <div class="lab-head">
+        <p class="eyebrow">互動實驗</p>
+        <h3>勾選 receiver，看 Service port 即時重算</h3>
+        <p class="goal">Port 號碼取自 operator 內建的 <span class="cite">internal/components/receivers/helpers.go</span> mapping 表，非示意數字。</p>
+      </div>
+      <div class="lab-body">
+        <div class="lab-controls">
+          <span class="ctrl-label">config.receivers</span>
+          <div class="check-list" id="port-checks">
+            <label class="check-item on"><input type="checkbox" data-recv="otlp" checked> otlp</label>
+            <label class="check-item"><input type="checkbox" data-recv="jaeger"> jaeger</label>
+            <label class="check-item"><input type="checkbox" data-recv="zipkin"> zipkin</label>
+            <label class="check-item"><input type="checkbox" data-recv="custom"> 104corp_syslog（自訂，operator 不認得）</label>
+          </div>
+        </div>
+        <div class="lab-output">
+          <div class="split">
+            <div>
+              <p class="pane-label source">CR spec.config（你寫的）</p>
+              <div class="readout" id="port-yaml"></div>
+            </div>
+            <div>
+              <p class="pane-label result">Service（operator 推導的）</p>
+              <table class="port-table" id="port-table">
+                <thead><tr><th>name</th><th>protocol</th><th class="num">port</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="lab-note" id="port-note">
+            只有<strong>接進 pipeline</strong>的 receiver 才會被掃到——config 裡定義了 receiver 但沒接進任何 pipeline，port 不會出現。
+            <span class="cite">internal/manifests/collector/service.go:145</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p style="margin-top:16px;">
+        勾上 <code>104corp_syslog</code> 會看到：它出現在左邊的 config 裡，但右邊的 port 表格完全沒反應——
+        operator 的內建 mapping 表只認識它自己知道的那批 receiver（otlp、jaeger、zipkin……），
+        自訂或太冷門的 receiver 它猜不出對應 port，就什麼都不做。這種情況要靠 <code>spec.ports</code> 手動補一筆，
+        而且是<strong>合併</strong>進最終結果，不是取代——手動宣告的優先，剩下的空間才留給自動推導的結果：
+      </p>
+    </div>
+    <div class="snippet">spec:
+  ports:
+    - name: 104corp-syslog     <span class="c"># Service port 的名稱，同 K8s ServicePort 命名規則</span>
+      port: <span class="hl">5140</span>
+      protocol: TCP
+      targetPort: 5140          <span class="c"># 沒寫的話預設等於 port</span>
+  config:
+    receivers:
+      104corp_syslog:
+        listen_address: 0.0.0.0:5140
+    service:
+      pipelines:
+        logs: { receivers: [104corp_syslog], exporters: [...] }</div>
+    <div class="prose">
+      <p>
+        這正是決策三「透傳但不是萬能」的邊界：operator 對 <code>spec.config</code> 的理解僅止於它認得的元件清單，
+        認不得的東西它不報錯、也不阻擋——就是單純不主動幫你開 port，需要平台自己知道「這個 receiver 要手動補 port」。
+        <span class="cite">internal/manifests/collector/service.go:159-175</span>
+      </p>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ 1.1 注入語意 ============ -->
+  <section id="inject-chain">
+    <div class="prose wide">
+      <p class="eyebrow">第一部：擴散 · 注入機制</p>
+      <h2>兩個決定接入成本的語意</h2>
+      <p>
+        機制本身很簡單：webhook 讀 annotation → 找 <code>Instrumentation</code> CR → 各語言注入器逐一處理。值得展開的是兩個語意。
+      </p>
+
+      <h3 class="sub">service.name 的推導鏈</h3>
+      <p>
+        <code>annotation resource.opentelemetry.io/service.name</code> ＞ Pod label <code>app.kubernetes.io/name</code> ＞
+        上層 workload 名稱 ＞ Pod / container 名。意味著大部分服務<strong>連 service.name 都不用設</strong>——
+        Deployment 名就是服務名，推導結果與手動設的值相同。
+      </p>
+    </div>
+
+    <div class="snippet-cap">業務團隊寫的全部東西</div>
+    <div class="snippet">spec:
+  template:
+    metadata:
+      annotations:
+        sidecar.opentelemetry.io/inject: <span class="hl">"opentelemetry/company-sidecar"</span>
+        instrumentation.opentelemetry.io/inject-python: <span class="hl">"opentelemetry/company-sidecar"</span></div>
+
+    <div class="snippet-cap">Pod 建立後 webhook 產出的結果（kubectl describe pod 節錄）</div>
+    <div class="snippet">Init Containers:
+  opentelemetry-auto-instrumentation-python   <span class="c">← agent 複製進共用 volume</span>
+  otc-container                               <span class="c">← sidecar collector</span>
+Containers:
+  llm-guard-api:
+    Environment:
+      PYTHONPATH:        /otel-auto-instrumentation-python/...
+      <span class="hl">OTEL_SERVICE_NAME: llm-guard-api</span>        <span class="c">← 自 Deployment 名推導，沒人手寫</span>
+      OTEL_RESOURCE_ATTRIBUTES: k8s.namespace.name=...,k8s.deployment.name=...</div>
+  </section>
+
+  <!-- ============ LAB 3: env merge ============ -->
+  <section id="lab-env">
+    <div class="prose">
+      <p class="eyebrow">機制四 · 擴散的縫</p>
+      <h2>Env 是四層優先權，不是覆蓋</h2>
+      <p>
+        由上而下依序檢查，最上層已經設定的值獲勝，下層同名變數會被忽略、不會覆蓋——
+        這是「例外留在 app 端，不腐蝕共用範本」的機制根源，也是後面所有「漸進遷移」與「per-service 例外」論證的基礎。
+      </p>
+    </div>
+
+    <div class="lab">
+      <div class="lab-head">
+        <p class="eyebrow">互動實驗</p>
+        <h3>在四層各自設定 <code>OTEL_SERVICE_NAME</code>，看誰贏</h3>
+        <p class="goal">勾選代表「這一層有設定這個變數」，取消勾選代表這一層沒有動它。</p>
+      </div>
+      <div class="lab-body">
+        <div class="lab-controls" style="grid-column: 1 / -1; border-right: none;">
+          <span class="ctrl-label">依優先權由高到低</span>
+          <div class="env-rows" id="env-rows">
+            <div class="env-row" data-layer="0">
+              <input type="checkbox" checked>
+              <span class="layer-name">① container 原生 env</span>
+              <input type="text" value="llm-guard-api-manual">
+            </div>
+            <div class="env-row" data-layer="1">
+              <input type="checkbox">
+              <span class="layer-name">② 語言區段 env（python）</span>
+              <input type="text" value="" placeholder="未設定" disabled>
+            </div>
+            <div class="env-row" data-layer="2">
+              <input type="checkbox">
+              <span class="layer-name">③ 共用 env（spec.env）</span>
+              <input type="text" value="" placeholder="未設定" disabled>
+            </div>
+            <div class="env-row" data-layer="3">
+              <input type="checkbox">
+              <span class="layer-name">④ CR 欄位推導值</span>
+              <input type="text" value="" placeholder="未設定" disabled>
+            </div>
+          </div>
+        </div>
+        <div class="lab-output" style="grid-column: 1 / -1;">
+          <p class="pane-label result">最終寫進 Pod 的值</p>
+          <div class="resolved-banner" id="env-resolved"></div>
+          <div class="lab-note">
+            四層都沒設定時，SDK 落回上面的推導鏈：annotation → 上層 workload 名稱 → Pod 名。
+            <span class="cite">apis/v1alpha1/instrumentation_types.go:36</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 1.2 llm-guard-api ============ -->
+  <section id="llm-guard">
+    <div class="prose wide">
+      <p class="eyebrow">第一部：擴散 · 場景解剖</p>
+      <h2>llm-guard-api 的 150 行去哪了</h2>
+      <p>
+        values.yaml 從 150 行 OTel 設定變成 3 行 podAnnotations + 1 行刻意留下的例外。重點不是行數，
+        是每一類設定的去向都對應一條治理原則。
+      </p>
+    </div>
+    <div class="table-scroll">
+      <table class="dtable">
+        <thead><tr><th>原本的東西</th><th>去向</th><th>為什麼</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>手掛 collector sidecar + 整份 config</td>
+            <td>sidecar 模式的 CR，config 原封不動</td>
+            <td>決策三的透傳設計。k8s ≥ 1.29 operator 自動以 native sidecar 注入，啟動/終止順序語意不變</td>
+          </tr>
+          <tr>
+            <td><code>OTEL_PYTHON_EXCLUDED_URLS</code>（健檢路徑）</td>
+            <td><strong>留在 app 自己的 env，不進 CR</strong></td>
+            <td>Per-service 差異不該進共用範本；append-if-not-set 讓 container 自己的值天生贏，不用為此 clone CR</td>
+          </tr>
+          <tr>
+            <td><code>OTEL_SERVICE_NAME</code></td>
+            <td>刪掉，自動推導</td>
+            <td>見上方推導鏈</td>
+          </tr>
+          <tr>
+            <td>手工拼的 <code>OTEL_RESOURCE_ATTRIBUTES</code> + 整組 Downward API env</td>
+            <td>刪掉，由 sidecar 自動蓋章</td>
+            <td>架構性的一條：手工拼這串的存在，本身就是拓撲缺陷的症狀（見下方拓撲分析）</td>
+          </tr>
+          <tr>
+            <td><code>OTEL_ZERO_CODE_MODE</code>（base image 包裝旗標）</td>
+            <td>必須拿掉</td>
+            <td>跟 <code>inject-python</code> 是兩套互斥的 auto-instrument 機制，同時開＝雙重插樁</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose wide">
+      <p style="margin-top:16px;">「after」的 values.yaml 全貌，就這幾行：</p>
+    </div>
+    <div class="snippet">web:
+  podAnnotations:
+    sidecar.opentelemetry.io/inject: "llm-guard-api-sidecar"
+    instrumentation.opentelemetry.io/inject-python: "llm-guard-api-instrumentation"
+    instrumentation.opentelemetry.io/container-names: "llm-guard-api"
+  env:
+    - name: OTEL_PYTHON_EXCLUDED_URLS      <span class="c"># 唯一刻意留下的例外：per-service 健檢路徑，</span>
+      value: "/healthz,/readyz,/metrics"   <span class="c"># 靠 append-if-not-set 天生贏過 CR</span></div>
+    <div class="prose wide">
+      <p style="margin-top:16px;"><strong>這三個 annotation key 各自在決定什麼</strong>，以及填的值為什麼是這樣（不是唯一寫法）：</p>
+    </div>
+    <div class="table-scroll">
+      <table class="dtable">
+        <thead><tr><th>Annotation</th><th>llm-guard-api 填的值</th><th>值的意思</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="k">sidecar.opentelemetry.io/inject</td>
+            <td><code>"llm-guard-api-sidecar"</code></td>
+            <td>沒有 <code>/</code>，所以是「去 Pod 自己的 namespace 找一個叫這個名字的 <code>OpenTelemetryCollector</code> CR（mode: sidecar）」——llm-guard-api 用的是<strong>自己專屬</strong>的一份 CR，不是全公司共用的那份</td>
+          </tr>
+          <tr>
+            <td class="k">instrumentation.opentelemetry.io/inject-python</td>
+            <td><code>"llm-guard-api-instrumentation"</code></td>
+            <td>同樣沒有 <code>/</code>——去 Pod 自己的 namespace 找一個叫這個名字的 <code>Instrumentation</code> CR，並且指定用 Python 語言的注入器</td>
+          </tr>
+          <tr>
+            <td class="k">instrumentation.opentelemetry.io/container-names</td>
+            <td><code>"llm-guard-api"</code></td>
+            <td>逗號分隔的容器名清單，指定 Python agent 要注入進 Pod 裡的哪個 container。這個 Pod 同時掛了 sidecar（見上一行），container 不只一個——不寫這個欄位時 operator 預設只注入 <strong>Pod 裡第一個 container</strong>，寫死名字才不會因為 container 順序而注入錯地方</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="prose wide">
+      <p>
+        三個 key 的值都還有其他寫法,對照 §1.4 組合技那節用過的共用範本模式：
+      </p>
+      <ul>
+        <li><code>"true"</code>——不指名，讓 operator 自動去 Pod 的 namespace 裡找「唯一一份」對應的 CR；namespace 裡有 0 份或超過 1 份都會出錯，所以只適合「每個 namespace 剛好一份 CR」的簡單場景。</li>
+        <li><code>"&lt;namespace&gt;/&lt;name&gt;"</code>（有 <code>/</code>）——跨 namespace 指到平台共用的那份 CR，例如前面 §1.4 用的 <code>"opentelemetry/company-sidecar"</code>。多數服務會用這種寫法接共用範本。</li>
+        <li><code>"&lt;name&gt;"</code>（沒有 <code>/</code>，llm-guard-api 用的就是這種）——只在 Pod 自己的 namespace 裡找。llm-guard-api 這裡刻意不用共用範本，是因為它有專屬的 sidecar config，見上面「原本的東西」那張表。</li>
+        <li><code>container-names</code> 什麼時候非填不可：Pod 有多個 container（掛了 sidecar 之後至少兩個），或是同一個 Pod 同時啟用多種語言注入時——這兩種情況下 operator 會直接擋掉 apply，逼你把 container 名字寫清楚。</li>
+      </ul>
+    </div>
+
+    <div class="prose wide">
+      <p>提煉：「翻譯」過程不做架構升級，一次只變一個變數；但翻譯過程會暴露既有架構的症狀——手工拼 k8s 屬性那條，下面拓撲分析會處理。</p>
+    </div>
+  </section>
+
+  <!-- ============ 1.3 存量矩陣 ============ -->
+  <section id="adopt-matrix" class="minor">
+    <div class="prose wide">
+      <p class="eyebrow">第一部：擴散 · 存量矩陣</p>
+      <h2>全公司服務怎麼收斂成一套模型</h2>
+      <p>存量不會整齊。統一模型：sidecar annotation 人人加，差別只在 Instrumentation 端用哪種 inject annotation。</p>
+    </div>
+    <div class="table-scroll">
+      <table class="dtable">
+        <thead><tr><th>服務類型</th><th>Instrumentation annotation</th><th>團隊要做的事</th></tr></thead>
+        <tbody>
+          <tr><td>無 OTel（Java/Python/Node）</td><td><code>inject-&lt;lang&gt;</code></td><td>加兩行 annotation</td></tr>
+          <tr><td>已手動裝 javaagent（Dockerfile 塞的）</td><td>改用 <code>inject-&lt;lang&gt;</code></td><td>從 image 移除 agent</td></tr>
+          <tr><td>已手動裝 SDK（程式內建 provider）</td><td><code>inject-sdk</code>（只注入 env、不裝 agent）</td><td>移除硬編的 provider 配置，改 env 驅動</td></tr>
+          <tr><td>PHP</td><td><code>inject-sdk</code></td><td>image 裝 PECL extension，設 <code>OTEL_PHP_AUTOLOAD_ENABLED</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="prose wide">
+      <p style="margin-top:16px;"><strong>邊界條件：</strong></p>
+      <ul>
+        <li><strong>PHP 沒有自動注入</strong>（<code>InstrumentationSpec</code> 無 php 欄位）。<code>inject-sdk</code> 是正解：agent 安裝留在 image，endpoint/sampler/resource/propagator 仍由平台 CR 集中下發——治理面不缺角，只缺零改 code。</li>
+        <li><strong>Go 是 eBPF sidecar</strong>，要 privileged + <code>otel-go-auto-target-exe</code>，feature gate 預設關。安全審查成本高，建議直接走 <code>inject-sdk</code> + 手動 SDK。</li>
+        <li>排查「沒被注入」：feature gate 沒開時 webhook 發 <code>InstrumentationRequestRejected</code> Warning event，Pod 照建——又一個安靜失敗點，跟決策二同一族。</li>
+      </ul>
+      <p style="margin-top:16px;"><strong>Zero-code（免改程式碼）支援的語言，完整清單就這些：</strong></p>
+    </div>
+    <div class="table-scroll">
+      <table class="dtable">
+        <thead><tr><th>Annotation</th><th>是否 zero-code</th><th>機制</th></tr></thead>
+        <tbody>
+          <tr><td class="k">inject-java</td><td>是</td><td>javaagent jar，掛進 <code>JAVA_TOOL_OPTIONS</code></td></tr>
+          <tr><td class="k">inject-nodejs</td><td>是</td><td><code>NODE_OPTIONS=--require ...</code></td></tr>
+          <tr><td class="k">inject-python</td><td>是</td><td><code>opentelemetry-instrument</code> 包裝進 entrypoint</td></tr>
+          <tr><td class="k">inject-dotnet</td><td>是</td><td>startup hook / profiler</td></tr>
+          <tr><td class="k">inject-go</td><td>算是——但要另外填 <code>OTEL_GO_AUTO_TARGET_EXE</code>，且 sidecar 要 privileged</td><td>eBPF uprobe，feature gate 預設關</td></tr>
+          <tr><td class="k">inject-apache-httpd</td><td>是（web server 模組，非語言）</td><td>otel-webserver-module</td></tr>
+          <tr><td class="k">inject-nginx</td><td>是（web server 模組，非語言）</td><td>otel-webserver-module</td></tr>
+          <tr><td class="k">inject-sdk</td><td><strong>否</strong>——agent 要自己裝好，這個 annotation 只補 env</td><td>只注入 endpoint/sampler/propagator/resource 等設定值</td></tr>
+          <tr><td class="k">（PHP 無對應欄位）</td><td>否——<code>InstrumentationSpec</code> 沒有 php 這個 struct</td><td>只能走 <code>inject-sdk</code>，agent 自己在 image 裝 PECL extension</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="prose wide">
+      <p style="margin-top:16px;"><strong>Instrumentation CR 大致長怎樣</strong>——直接用 lab 裡實際跑得動的那份，比自己編的教學範例更準：</p>
+    </div>
+    <div class="snippet">apiVersion: opentelemetry.io/v1alpha1
+<span class="c">kind: Instrumentation</span>
+metadata:
+  name: lab-instrumentation
+  namespace: otel-lab
+spec:
+  exporter:
+    endpoint: <span class="hl">http://localhost:4318</span>   <span class="c"># 明寫，效果等同留空——見下方說明</span>
+  env:
+    - name: OTEL_EXPORTER_OTLP_PROTOCOL
+      value: http/protobuf
+    - name: OTEL_TRACES_EXPORTER
+      value: otlp
+    - name: OTEL_METRICS_EXPORTER
+      value: otlp
+    - name: OTEL_LOGS_EXPORTER
+      value: otlp
+    - name: OTEL_METRIC_EXPORT_INTERVAL   <span class="c"># lab 用途，調快匯出間隔方便馬上看到 metrics</span>
+      value: "5000"
+  propagators:
+    - tracecontext
+    - baggage
+  sampler:
+    type: <span class="hl">parentbased_always_on</span>       <span class="c"># SDK 端全收，取樣決策交給 gateway 的 tail_sampling</span>
+
+  java:                                  <span class="c"># 語言區段，7 種語言都是同樣的巢狀結構</span>
+    env:
+      - name: OTEL_INSTRUMENTATION_COMMON_DEFAULT_ENABLED
+        value: "true"
+  python:
+    env:
+      - name: OTEL_PYTHON_LOG_CORRELATION
+        value: "true"
+      - name: OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED
+        value: "true"</div>
+    <div class="prose wide">
+      <p class="cite">classroom/lab/manifests/20-instrumentation.yaml</p>
+      <p>
+        兩個地方跟前面討論的機制對得上，但寫法不一樣，值得澄清：
+      </p>
+      <p>
+        <strong>1. 這裡完全沒有出現 <code>image</code>／<code>resources</code>。</strong>
+        java/python 區段只有 <code>env</code>——多數團隊實際會寫的就是這樣：讓 operator 決定用哪個 agent image、給多少資源，
+        自己只管 SDK 行為要開什麼。這兩個欄位要填，通常是遇到平台要自己 pin agent 版本、或 init container 資源配額被 LimitRange 卡住才會用到——
+        它們的本質是在描述<strong>一個真正會建出來的 container</strong>：Java/Python/NodeJS/DotNet/ApacheHttpd/Nginx 都走
+        <strong>init container</strong> 模式，查了 <code>internal/instrumentation/python.go</code>，實際建出的 init container 指令就是
+        <code>cp -r /autoinstrumentation/. /otel-auto-instrumentation-python</code>，把 agent 檔案複製進共用 volume 就結束，
+        app container 再掛載那個 volume用；<code>image</code> 是那個「裝了 agent 檔案」的來源 image，<code>resources</code>
+        是這個複製動作要吃多少 CPU/記憶體——跟 app 自己的資源配額是兩件事。<strong>只有 Go 例外</strong>：
+        <code>internal/instrumentation/golang.go</code> 建的是常駐 <strong>sidecar</strong>（<code>ShareProcessNamespace: true</code>、
+        privileged），因為 eBPF 需要持續掛著 uprobe，不能複製完就結束——Go 的 <code>resources</code> 才是「agent 常駐要吃多少資源」的字面意思。
+      </p>
+      <p>
+        <strong>2. <code>exporter.endpoint</code> 明寫成 <code>http://localhost:4318</code>，不是留空。</strong>
+        效果跟留空完全一樣——機制六驗過留空時 SDK 也是落回這個值。明寫純粹是讓讀 CR 的人一眼看到「這是要送去同 Pod sidecar」，
+        不用先知道 SDK 的隱含預設值才看得懂；犧牲一點 verbose 換可讀性，兩種寫法一樣正確。
+      </p>
+      <p>
+        <strong>3. <code>sampler.type</code> 用 <code>parentbased_always_on</code>，不是機率取樣。</strong>
+        註解寫得很清楚：「SDK 端先全收，真正的取樣決策交給 gateway 的 tail_sampling」——呼應拓撲分析那節的架構，
+        取樣決策留給有完整 trace 視野的 gateway 做，SDK 層不擅自丟資料。
+      </p>
+      <p>
+        真正的 SDK/API 設定在頂層 <code>spec.exporter</code>/<code>spec.sampler</code>/<code>spec.propagators</code>/<code>spec.resource</code>，
+        跨語言統一透過 env 灌給 app；語言區段的 <code>env</code> 只是第二層優先權，補該語言專屬的 SDK env。
+      </p>
+      <p>
+        <strong>4. 沒填 <code>image</code>，版本到底是誰決定的？</strong>
+      </p>
+      <p class="resolved-banner">
+        一句話：<strong>就是這個 operator release 打包當下，<code>versions.txt</code> 裡釘死的那個版本</strong>
+        （現在的 repo 是 python <code>0.63b1</code>、java <code>2.28.1</code>）——不是動態抓最新版，operator 沒升級，這組版本就不會變。
+        想知道實際套用的是哪版，直接 <code>kubectl get instrumentation &lt;CR 名字&gt; -o yaml</code> 看 <code>spec.python.image</code>，
+        比查程式碼準。
+      </p>
+      <p>
+        底下是這個值怎麼被寫進去的機制，想確認來源再看：
+        不是等 Pod 建立時才動態查——是 <strong>CR 本身有一個獨立的 mutating webhook</strong>
+        （<code>internal/webhook/instrumentation_webhook.go</code> 的 <code>Default()</code>），在你 <code>kubectl apply</code>
+        這份 CR 的當下就把空欄位填死：<code>r.Spec.Python.Image = w.cfg.AutoInstrumentationPythonImage</code>。
+        所以你 <code>kubectl get instrumentation lab-instrumentation -o yaml</code> 會看到一個具體版本號，
+        即使你的 git 裡那份 YAML 完全沒寫——<strong>etcd 存的 CR 跟你手上的原始檔案不是同一份</strong>，apply 那一刻就被寫死了。
+        連 <code>resources</code>（未填時 500m/256Mi 上限、50-128Mi 請求）也是同一個 defaulting webhook 一起補的。
+      </p>
+      <p>
+        那個 <code>w.cfg.AutoInstrumentationPythonImage</code> 又是哪來的：<code>versions.txt</code>
+        （<code>autoinstrumentation-python=0.63b1</code>）→ <code>Makefile</code> 用 <code>awk</code> 讀出來
+        → 編 operator 二進位檔時用 <code>-ldflags -X</code> 燒進 <code>internal/version</code>
+        → <code>internal/config.New()</code> 拼成完整 image 字串，變成這個 operator 版本的內建預設值。
+        同一個值也能被 operator chart 的 <code>manager.autoInstrumentationImage.python</code>（§2.2 chart values 表）
+        或 <code>AUTO_INSTRUMENTATION_PYTHON_IMAGE</code> 環境變數整組覆蓋——覆蓋的是「這個 operator 部署的預設值」，
+        不是個別 CR，所以會影響到所有沒自己填 <code>image</code> 的 Instrumentation CR。
+      </p>
+      <p class="callout">
+        這個 defaulting webhook 還順手在 CR 上留了一條線索——把套用當下的預設版本寫進
+        <code>instrumentation.opentelemetry.io/default-auto-instrumentation-python-image</code> 這個 annotation。
+        目的是讓 <code>internal/instrumentation/upgrade</code> 的升級流程日後能分辨：這個 <code>image</code> 是你自己刻意 pin 的，
+        還是當初 operator 隨手補的預設值（如果是後者，operator 升級時可以放心幫你一起往前推）——呼應 §2.3
+        <code>spec.upgradeStrategy</code> 那套逐 CR 安全閥的邏輯。
+      </p>
+      <p>
+        對照組——如果平台團隊決定<strong>自己 pin 版本</strong>，不讓它跟著 operator 走，就是同一份 CR 多兩行：
+      </p>
+    </div>
+    <div class="snippet">apiVersion: opentelemetry.io/v1alpha1
+<span class="c">kind: Instrumentation</span>
+metadata:
+  name: lab-instrumentation
+  namespace: otel-lab
+spec:
+  exporter:
+    endpoint: http://localhost:4318
+  env:
+    - name: OTEL_EXPORTER_OTLP_PROTOCOL
+      value: http/protobuf
+  propagators: [tracecontext, baggage]
+  sampler:
+    type: parentbased_always_on
+
+  java:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:<span class="hl">2.28.1</span>
+    <span class="c"># ↑ 明寫＝跟現在 operator 內建的預設剛好一樣，但從今以後 operator 升級也不會再動它</span>
+    env:
+      - name: OTEL_INSTRUMENTATION_COMMON_DEFAULT_ENABLED
+        value: "true"
+  python:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:<span class="hl">0.60b0</span>
+    <span class="c"># ↑ 刻意停在舊版：團隊還沒驗證過 operator 目前內建的 0.63b1，先鎖住</span>
+    env:
+      - name: OTEL_PYTHON_LOG_CORRELATION
+        value: "true"</div>
+    <div class="prose wide">
+      <p>
+        兩個語言示範兩種心態：<code>java</code> 那行寫的版本跟 operator 現在的內建預設一樣，純粹是「先鎖住，之後 operator 升級也不會被動跟走」；
+        <code>python</code> 那行才是真正的「自己選版本」——刻意停在比內建預設舊的 <code>0.60b0</code>，因為還沒驗證過新版 agent 的行為。
+        兩種都是合法用法，差別只在你的動機是「防止被動升級」還是「主動選一個不同的版本」。
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ LAB 5: sidecar endpoint ============ -->
+  <section id="lab-endpoint">
+    <div class="prose">
+      <p class="eyebrow">機制六 · 組合技的陷阱</p>
+      <h2>Sidecar CR 的 <code>exporter.endpoint</code> 空一格，流向就整個換掉</h2>
+      <p>
+        <code>inject-sdk</code> + <code>sidecar.opentelemetry.io/inject</code> 疊在同一個 Pod 時，
+        <code>configureExporter</code> 只在 CR 的 endpoint 非空時才注入 <code>OTEL_EXPORTER_OTLP_ENDPOINT</code>。
+        留空，SDK 落回內建預設 <code>localhost:4318</code>，正好打到同一個 Pod 裡的 sidecar；填了 gateway 位址，SDK 會直接繞過 sidecar。
+        結論：需要兩份 Instrumentation CR。
+      </p>
+    </div>
+
+    <div class="lab">
+      <div class="lab-head">
+        <p class="eyebrow">互動實驗</p>
+        <h3>切換 endpoint 是否填值，看 SDK 實際送到哪裡</h3>
+      </div>
+      <div class="lab-body">
+        <div class="lab-controls">
+          <span class="ctrl-label">Instrumentation.spec.exporter.endpoint</span>
+          <div class="seg" id="ep-seg">
+            <button type="button" data-ep="empty" aria-pressed="true">留空</button>
+            <button type="button" data-ep="set" aria-pressed="false">填 gateway URL</button>
+          </div>
+        </div>
+        <div class="lab-output">
+          <p class="pane-label result">SDK 的送出路徑</p>
+          <div class="flow" id="ep-flow">
+            <div class="node active" id="ep-sdk">app SDK</div>
+            <span class="arrow active" id="ep-arrow">──────▶</span>
+            <div class="node" id="ep-target"></div>
+          </div>
+          <div class="readout" id="ep-env"></div>
+          <div class="lab-note">
+            走 sidecar 的服務，這個欄位<strong>必須留空</strong>；endpoint 指向 gateway，SDK 會繞過 sidecar 直送，
+            k8s 屬性蓋章、per-service 隔離就都拿不到了。
+            <span class="cite">internal/instrumentation/exporter.go</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="snippet-cap">兩份 CR，差異只有一個欄位</div>
+    <div class="split" style="margin-top:14px;">
+      <div>
+        <p class="pane-label source">company-default（直送）</p>
+        <div class="snippet" style="margin-top:0;">exporter:
+  endpoint: <span class="hl">http://gateway-collector.open-telemetry.svc:4318</span>
+sampler: { type: parentbased_traceidratio, argument: "0.25" }</div>
+      </div>
+      <div>
+        <p class="pane-label result">company-sidecar（走 sidecar）</p>
+        <div class="snippet" style="margin-top:0;">exporter: {}      <span class="c"># ← 留空</span>
+sampler: { type: parentbased_traceidratio, argument: "0.25" }</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 1.5 紅線 ============ -->
+  <section id="redlines" class="minor">
+    <div class="prose wide">
+      <p class="eyebrow">第一部：擴散 · 收尾</p>
+      <h2>紅線與漸進語意</h2>
+    </div>
+    <div class="redline">
+      <span class="tag">紅線</span>
+      <p><strong>已手動插樁的服務絕不加 <code>inject-&lt;lang&gt;</code></strong>：operator 的防重複檢查只認自己注入的東西，不知道 image 裡的手動 agent。Java 的後果最具體——operator 往既有 <code>JAVA_TOOL_OPTIONS</code> 後面 append，兩個 agent 同時掛。</p>
+    </div>
+    <div class="redline">
+      <span class="tag">紅線</span>
+      <p><strong>「移除手動配置」＝移除 provider 初始化，不是移除 SDK。</strong>業務 code 裡的 OTel API 呼叫全留；provider 改成無參數、由 env 自動配置。API/SDK 分界正是 OTel 留給平台治理的縫。</p>
+    </div>
+    <div class="redline">
+      <span class="tag">保證</span>
+      <p><strong>漸進的機制保證</strong>：append-if-not-set 意味著團隊自己的 <code>OTEL_*</code> env 不會被蓋。還沒改完 provider 的服務先掛 sidecar annotation，改完再補 <code>inject-sdk</code>——每一步都可以獨立 rollback。</p>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ 2.1 拓撲分析 ============ -->
+  <section id="topology">
+    <div class="prose wide">
+      <p class="eyebrow">第二部：治理 · 拓撲分析</p>
+      <h2>現況的結構性問題，與目標拓撲</h2>
+      <p>兩個結構性問題，都不是「設定沒調好」，是拓撲本身的。</p>
+    </div>
+
+    <div class="snippet-cap">現況資料流</div>
+    <div class="topo">
+      <span class="node">app SDK</span><span class="arrow">→</span>
+      <span class="node warn">手掛 sidecar</span><span class="arrow">→</span>
+      <span class="node">span-lb.open-telemetry.svc（跨 namespace）</span><span class="arrow">→</span>
+      <span class="node">Tempo / metrics 後端</span>
+    </div>
+
+    <div class="prose wide">
+      <p><strong>問題一：k8s 屬性只能手工拼。</strong> <code>k8sattributes</code> processor 靠連線來源 pod IP 反查 metadata；
+      資料一經任何中繼轉手，來源 IP 就不是原始 Pod。所以每個服務的 values 裡都手工拼了一份 <code>OTEL_RESOURCE_ATTRIBUTES</code> +
+      Downward API env——同一段邏輯複製 N 份，這就是「治理缺位」的具體長相。Operator 的解法：注入 sidecar 時自動備好組好的
+      <code>OTEL_RESOURCE_ATTRIBUTES</code>（含 owner reference 反查的 deployment/replicaset 名稱），sidecar config 一個
+      <code>resourcedetection</code>（env detector）收工——不打 k8s API、不用 RBAC。
+      <span class="cite">pkg/sidecar/attributes.go</span></p>
+    </div>
+
+    <div class="split">
+      <div>
+        <p class="pane-label source">現況：每個服務自己手拼（values.yaml）</p>
+        <div class="snippet" style="margin-top:0;">env:
+  - name: <span class="hl">OTEL_RESOURCE_ATTRIBUTES</span>
+    value: >-
+      k8s.namespace.name=default,
+      k8s.pod.name=$(POD_NAME),
+      k8s.node.name=$(NODE_NAME),
+      k8s.deployment.name=llm-guard-api   <span class="c"># 這行是手打的，改個服務名要記得同步改</span>
+  - name: POD_NAME
+    valueFrom: { fieldRef: { fieldPath: metadata.name } }
+  - name: NODE_NAME
+    valueFrom: { fieldRef: { fieldPath: spec.nodeName } }</div>
+      </div>
+      <div>
+        <p class="pane-label result">Operator：webhook 注入時自動算好</p>
+        <div class="snippet" style="margin-top:0;">Environment:
+  OTEL_RESOURCE_ATTRIBUTES_POD_NAME:   <span class="c"># downward API</span>
+    (v1:metadata.name)
+  OTEL_RESOURCE_ATTRIBUTES_POD_UID:
+    (v1:metadata.uid)
+  OTEL_RESOURCE_ATTRIBUTES_NODE_NAME:
+    (v1:spec.nodeName)
+  <span class="hl">OTEL_RESOURCE_ATTRIBUTES</span>:
+    k8s.deployment.name=llm-guard-api,
+    k8s.deployment.uid=3f2a1c9e-...,      <span class="c"># ← webhook 當下查 K8s API 反查出來，寫死的字串</span>
+    k8s.namespace.name=default,
+    k8s.node.name=$(OTEL_RESOURCE_ATTRIBUTES_NODE_NAME),  <span class="c"># ← 這幾個要等 Pod 排程完才知道</span>
+    k8s.pod.name=$(OTEL_RESOURCE_ATTRIBUTES_POD_NAME),    <span class="c">#   所以用 downward API 間接參照</span>
+    k8s.pod.uid=$(OTEL_RESOURCE_ATTRIBUTES_POD_UID),
+    k8s.replicaset.name=llm-guard-api-7d9f8c6b5,
+    k8s.replicaset.uid=8b6e2d41-...</div>
+      </div>
+    </div>
+
+    <div class="prose wide">
+      <p style="margin-top:14px;">
+        兩邊的差別：webhook 在 admission 那一刻就能查到 Pod 的 owner chain(Pod → ReplicaSet → Deployment)，
+        所以 <code>k8s.deployment.name</code>／<code>k8s.replicaset.name</code> 這幾個是<strong>當下反查、直接寫死</strong>成字串；
+        但 Pod 自己的名字、UID、排到哪個節點，要等 Pod 真的建立、排程完才會確定，所以這三個改用 downward API 用 <code>$(...)</code> 間接參照——
+        這就是為什麼 Pod 上會多出三個 <code>OTEL_RESOURCE_ATTRIBUTES_POD_NAME</code> 這類輔助 env，不是隨手多加的。
+      </p>
+      <p>
+        Sidecar 這邊的 collector config 只需要一行就能把上面這串吃進去：
+      </p>
+    </div>
+    <div class="snippet">processors:
+  resourcedetection/env:
+    <span class="hl">detectors: [env]</span>   <span class="c"># 讀 process 環境變數裡的 OTEL_RESOURCE_ATTRIBUTES，僅此而已</span>
+service:
+  pipelines:
+    traces:
+      processors: [resourcedetection/env, batch]</div>
+    <div class="prose wide">
+      <p>
+        <code>env</code> detector 的實作只有一行關鍵邏輯：讀 <code>os.Getenv("OTEL_RESOURCE_ATTRIBUTES")</code>，
+        解析成 key=value 逐一掛上 resource——沒有 k8s client、沒有 List/Watch，所以不需要 RBAC，
+        跟 <code>k8sattributes</code> processor 那種要打 K8s API、還要考慮來源 IP 是否失真的做法完全是兩條路。
+      </p>
+    </div>
+    <div class="table-scroll">
+      <table class="dtable">
+        <thead><tr><th>要做的事</th><th>誰負責</th><th>你要不要在 CR 裡寫</th></tr></thead>
+        <tbody>
+          <tr><td>產生 <code>OTEL_RESOURCE_ATTRIBUTES</code> + 3 個 downward API env</td><td>operator webhook，無條件自動</td><td><strong>不用寫</strong>——寫了反而蓋掉自動版本</td></tr>
+          <tr><td>把這串 env 讀進 pipeline、變成 resource 屬性</td><td>你自己在 <code>spec.config.processors</code></td><td><strong>要寫</strong> <code>resourcedetection/env: { detectors: [env] }</code>，並接進 pipeline 的 processors 清單</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="prose wide">
+      <p>
+        <strong>但這裡要分清楚兩件事，平台要宣告的其實只有一半。</strong>
+        上面那串 <code>OTEL_RESOURCE_ATTRIBUTES</code> 是 operator <strong>無條件自動加</strong>的——只要這份 CR 是
+        <code>mode: sidecar</code>，webhook 組出 sidecar container 時就會呼叫 <code>getResourceAttributesEnv</code> 把它跟三個
+        downward API env 一起塞進<strong>這個 sidecar container 自己的 env</strong>（不是 app 那個 container 的 env）。
+        平台完全不用在 CR 裡宣告這件事，也宣告不了——除非你自己在 <code>spec.env</code> 手動設了同名的
+        <code>OTEL_RESOURCE_ATTRIBUTES</code>，operator 才會讓步不覆蓋（<code>hasResourceAttributeEnvVar</code> 那個檢查，
+        append-if-not-set 又出現一次）。
+      </p>
+      <p>
+        平台真正要寫進 CR 的，只有 <code>resourcedetection/env</code> 這個 processor——因為決策三，operator 不會替你的
+        <code>spec.config</code> 加任何 processor 或改 pipeline，這行不寫，env 變數就靜靜躺在那裡沒人讀。完整的 sidecar CR 長這樣：
+      </p>
+    </div>
+    <div class="snippet">apiVersion: opentelemetry.io/v1beta1
+<span class="c">kind: OpenTelemetryCollector</span>
+metadata:
+  name: llm-guard-api-sidecar        <span class="c"># annotation 裡指到的就是這個名字</span>
+  namespace: llm-guard-api
+spec:
+  mode: <span class="hl">sidecar</span>
+  config:
+    receivers:
+      otlp: { protocols: { grpc: {}, http: {} } }
+    processors:
+      <span class="hl">resourcedetection/env: { detectors: [env] }</span>   <span class="c"># ← 平台唯一要手寫的一行</span>
+      batch: {}
+    exporters:
+      otlp:
+        endpoint: span-lb.open-telemetry.svc.cluster.local:4317
+        tls: { insecure: true }
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [resourcedetection/env, batch]
+          exporters: [otlp]</div>
+    <div class="prose wide">
+      <p>
+        再提醒一個容易誤會的地方：這串 <code>OTEL_RESOURCE_ATTRIBUTES</code> 蓋的是<strong>sidecar 收到資料之後</strong>幫它蓋章，
+        不是 app 自己 SDK 送出去時就自帶——app 那個 container 的環境變數完全沒被動到。app 端要不要自己也有 resource 屬性，
+        是 <code>instrumentation.opentelemetry.io/inject-python</code>（機制四那條線）另外處理的事，兩條注入路徑各管各的 env。
+      </p>
+      <p>
+        那條路一樣<strong>不用宣告</strong>——<code>internal/instrumentation/sdk.go</code> 的 <code>injectCommonSDKConfig</code>
+        會自動組出 <code>k8s.namespace.name</code>、<code>k8s.pod.name</code>、<code>k8s.node.name</code>、
+        <code>k8s.container.name</code>、<code>service.instance.id</code>，並且一樣沿著 owner reference 往上查
+        ReplicaSet/Deployment（<code>addParentResourceLabels</code>），寫進 app container 自己的
+        <code>OTEL_RESOURCE_ATTRIBUTES</code>。差別只有一點：<strong>不需要另外寫任何 processor 去「消化」它</strong>——
+        OTel SDK 啟動時本來就會自己讀這個環境變數，這是 SDK 規範內建的行為，不是 operator 額外做的事。
+      </p>
+    </div>
+    <div class="table-scroll">
+      <table class="dtable">
+        <thead><tr><th></th><th>sidecar CR 那條路</th><th>Instrumentation CR 這條路</th></tr></thead>
+        <tbody>
+          <tr><td class="k">Env 變數本身</td><td>自動</td><td>自動</td></tr>
+          <tr><td class="k">要不要多寫一個「消化」設定</td><td><strong>要</strong>——<code>spec.config.processors</code> 加 <code>resourcedetection/env</code></td><td><strong>不用</strong>——SDK 標準行為，啟動時自己讀</td></tr>
+          <tr><td class="k">CR 裡可選填的加值欄位</td><td>（無，config 透傳）</td><td><code>spec.resource.resourceAttributes</code>（自訂額外屬性，優先權最低）、<code>spec.resource.addK8sUIDAttributes</code>（預設關，開了才多查 UID）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose wide">
+      <p><strong>問題二：tail sampling 沒有正確的前置條件。</strong> 多副本 gateway 做 tail sampling，同一 trace 的所有 span 必須進同一副本。
+      <code>span-lb</code> 這個名字暗示有做 span 層級 LB——要驗證它的 routing key 是不是 traceID；如果只是 Service 層的 L4 均衡，
+      tail sampling 的決策一直在看片段。下方機制七直接動手驗這件事。</p>
+    </div>
+
+    <div class="snippet-cap">目標拓撲</div>
+    <div class="topo">
+      <span class="node ok">sidecar（k8s 屬性蓋章）</span><span class="arrow">→</span>
+      <span class="node ok">agent DaemonSet（routing_key: traceID）</span><span class="arrow">→</span>
+      <span class="node ok">gateway StatefulSet × N（tail_sampling）</span><span class="arrow">→</span>
+      <span class="node">後端</span>
+    </div>
+
+    <div class="split" style="margin-top:14px;">
+      <div>
+        <p class="pane-label source">agent CR（mode: daemonset）</p>
+        <div class="snippet" style="margin-top:0;">exporters:
+  load_balancing:
+    <span class="hl">routing_key: traceID</span>
+    resolver:
+      dns:
+        hostname: gateway-collector-headless...
+        port: "4317"</div>
+      </div>
+      <div>
+        <p class="pane-label result">gateway CR（mode: statefulset）</p>
+        <div class="snippet" style="margin-top:0;">processors:
+  tail_sampling:
+    decision_wait: 10s
+    policies:
+      - { name: errors, type: status_code, ... }
+      - { name: slow, type: latency, ... }
+      - { name: rest, type: probabilistic, ... }</div>
+      </div>
+    </div>
+
+    <div class="prose wide">
+      <p style="margin-top:16px;">Gateway 用 <code>statefulset</code> mode 不是偏好，是 loadbalancing resolver 需要 headless service 的穩定 DNS——
+      機制二的實驗已經示範過這件事。Sampling 政策只存在 gateway CR 一個地方；換後端不動任何業務部署。</p>
+      <p class="callout">Sidecar 的成本要誠實：per-pod 線性增長。買到 per-pod 身分蓋章、per-service 客製隔離、短生命週期 process 的就近 flush。三個都用不上的服務，讓 SDK 直送 agent 層即可，模型允許混用。</p>
+    </div>
+  </section>
+
+  <!-- ============ LAB 6: trace routing ============ -->
+  <section id="lab-trace">
+    <div class="prose">
+      <p class="eyebrow">機制七 · tail sampling 的前置條件</p>
+      <h2>沒有 <code>routing_key: traceID</code>，tail sampling 只看得到片段</h2>
+      <p>
+        Load balancing exporter 用 traceID 當 routing key 就是為了保證同一條 trace 進同一副本；
+        只靠 Service 的 L4 均衡，同一條 trace 會被隨機打散。
+      </p>
+    </div>
+
+    <div class="lab">
+      <div class="lab-head">
+        <p class="eyebrow">互動實驗</p>
+        <h3>切換 routing_key，看三條 trace 落在哪個 gateway 副本</h3>
+        <p class="goal">同色的點屬於同一條 trace（trace A / B / C），三欄代表三個 gateway 副本。</p>
+      </div>
+      <div class="lab-body">
+        <div class="lab-controls">
+          <span class="ctrl-label">exporters.load_balancing.routing_key</span>
+          <div class="seg" id="rk-seg">
+            <button type="button" data-rk="on" aria-pressed="true">traceID</button>
+            <button type="button" data-rk="off" aria-pressed="false">未設定（Service 層 L4）</button>
+          </div>
+        </div>
+        <div class="lab-output">
+          <p class="pane-label result">三個 gateway 副本收到的 span</p>
+          <div class="trace-grid" id="trace-grid"></div>
+          <div class="status-row" style="margin-top: 4px;"><span class="lbl">同一條 trace 完整落在單一副本的比例</span><span id="trace-ratio"></span></div>
+          <div class="lab-note">
+            <span class="dot a"></span> trace A
+            <span class="dot b"></span> trace B
+            <span class="dot c"></span> trace C
+            ——片段化時，每個副本的 <code>tail_sampling</code> 只看到自己收到的那幾個 span，errors/latency policy 判斷不完整。
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ 2.2 Helm × Operator ============ -->
+  <section id="helm-model">
+    <div class="prose wide">
+      <p class="eyebrow">第二部：治理 · 所有權模型</p>
+      <h2>Helm 管交付，Operator 管執行期</h2>
+      <p>
+        <code>helm upgrade</code> 結束的那一刻 Helm 的工作完成，operator 的工作才開始。引入 operator 改變的不是「用不用 Helm」，
+        是 Helm 交付物從 workload 變成 CR。
+      </p>
+    </div>
+    <div class="table-scroll">
+      <table class="dtable">
+        <thead><tr><th>資源</th><th>擁有者</th></tr></thead>
+        <tbody>
+          <tr><td class="k">Operator 本身</td><td>Helm（<a href="https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-operator">官方 opentelemetry-operator chart</a>，<code>autoGenerateCert</code> 免 cert-manager）</td></tr>
+          <tr><td class="k">CRD</td><td>Helm，但升級語意要注意（見下方坑一）</td></tr>
+          <tr><td class="k">平台的 CR（gateway/agent/Instrumentation）</td><td>平台的 chart 或 GitOps repo——政策交付照走 Git PR + CD，流程不變</td></tr>
+          <tr><td class="k">Operator 長出來的 Deployment/ConfigMap/Service</td><td>Operator。改了會被 reconcile 改回（feature，不是 bug）</td></tr>
+          <tr><td class="k">app chart</td><td>業務團隊，只動 values 的 podAnnotations</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose wide">
+      <p style="margin-top:16px;">
+        官方 <a href="https://github.com/open-telemetry/opentelemetry-helm-charts">opentelemetry-helm-charts</a> repo 有三個相關 chart，角色要分清楚：
+        <code>opentelemetry-operator</code>（裝 operator 本身）、<code>opentelemetry-collector</code>（不經 operator，直接用 Helm 展開 collector workload——就是現況那條路的官方版）、
+        <code>opentelemetry-kube-stack</code>（operator + CR 形式的 collectors + Instrumentation 一包到位，適合新 cluster 起手式）。
+      </p>
+    </div>
+
+    <div class="snippet-cap">operator chart 治理相關 values（節錄，皆對照 chart 原始碼）</div>
+    <div class="table-scroll">
+      <table class="dtable">
+        <thead><tr><th>values</th><th>預設</th><th>為什麼是治理選項</th></tr></thead>
+        <tbody>
+          <tr><td class="k">manager.collectorImage</td><td>官方 image，tag 隨 chart 版本釘死</td><td>CR 沒寫 <code>spec.image</code> 時的全 cluster 預設 collector image；自建 image 設在這裡可以拿回「升 chart＝升全部 collector」的治理紅利</td></tr>
+          <tr><td class="k">manager.autoInstrumentationImage.&lt;lang&gt;</td><td>空＝跟 operator 內建版本走</td><td>各語言 agent image 的集中覆蓋點；不設＝交給 operator 治理</td></tr>
+          <tr><td class="k">manager.autoInstrumentation.go.enabled</td><td>false</td><td>Go eBPF 注入的總開關——存量矩陣那條紅線在部署層的實體</td></tr>
+          <tr><td class="k">admissionWebhooks.pods.failurePolicy</td><td>Ignore</td><td>決策二的取捨在部署層是可翻轉的：改 Fail＝注入 fail-close，見機制五的實驗</td></tr>
+          <tr><td class="k">admissionWebhooks.certManager / autoGenerateCert</td><td>certManager 優先</td><td>Webhook 憑證三選一：cert-manager／chart 自簽／自帶憑證</td></tr>
+          <tr><td class="k">crds.create</td><td>true</td><td>CRD 以一般 template 交付，<code>helm upgrade</code> 會升級 CRD——連動見下方坑一</td></tr>
+          <tr><td class="k">manager.createRbacPermissions</td><td>false</td><td>允許 operator 依 collector config 推導、自動替 collector 建 RBAC</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose wide">
+      <p style="margin-top:16px;"><strong>三個坑（都是營運層面的，架構評審要過）：</strong></p>
+    </div>
+    <div class="redline">
+      <span class="tag">坑一</span>
+      <p><strong>CRD 生命週期跟著 chart 走，兩頭都有地雷。</strong>官方 chart 把 CRD 當一般 template 交付（<code>crds.create=true</code>），<code>helm upgrade</code> 會同步升級 CRD。代價：接手既有 CRD 會撞 Helm ownership（要先補 adoption annotation）；CRD template 上沒有 <code>helm.sh/resource-policy: keep</code>，<code>helm uninstall</code> 會連 CRD 一起刪——級聯刪光所有 CR。</p>
+    </div>
+    <div class="redline">
+      <span class="tag">坑二</span>
+      <p><strong>GitOps 健康判斷。</strong>CR apply 成功 ≠ collector 起來了。ArgoCD/Flux 需要補 custom health check 看 CR 的 <code>status</code>，否則 sync green 但 pipeline 是壞的。</p>
+    </div>
+    <div class="redline">
+      <span class="tag">坑三</span>
+      <p><strong>雙主人。</strong>發現 operator 管的資源「一直被改回去」，正確反應是去改 CR，不是加大力度改 Deployment。</p>
+    </div>
+
+    <div class="prose wide">
+      <p class="eyebrow" style="margin-top:32px;">存量遷移路徑</p>
+    </div>
+    <ol class="phases">
+      <li><strong>中央層不動。</strong>Operator 只管 sidecar + Instrumentation，sidecar exporter 照指 <code>span-lb.open-telemetry.svc</code>。中央層零變更。</li>
+      <li><strong>中央 collector 的 config 從 chart values 搬進 CR。</strong>Service 名稱會變（operator 產生 <code>&lt;CR名&gt;-collector</code>）——切換期留一個舊名 ExternalName 當 alias，或反過來把切流量做在 sidecar CR 的 exporter endpoint。</li>
+      <li><strong>新舊並行驗證後下掉 Helm 版 collector。</strong>隨時可切回：endpoint 改回去就好。</li>
+    </ol>
+  </section>
+
+  <!-- ============ 2.3 版本治理 ============ -->
+  <section id="versioning" class="minor">
+    <div class="prose wide">
+      <p class="eyebrow">第二部：治理 · 版本治理</p>
+      <h2><code>versions.txt</code> 模型 vs 自建 image</h2>
+      <p>
+        Operator 的版本治理模型：<code>versions.txt</code> 把 collector、各語言 agent、target allocator 的版本釘成一組——
+        發佈一個 operator 版本＝發佈一整組驗證過的元件版本。Operator 升級時，upgrade routine 主動把 cluster 裡所有 CR 遷到新 schema/預設值；
+        <code>spec.upgradeStrategy: none</code> 和 <code>spec.managementState: unmanaged</code> 是逐 CR 的安全閥。
+      </p>
+      <p class="callout warn">
+        <strong>跟自建 image 直接衝突的現實：</strong><code>spec.image</code> 明確指定時，operator 的自動版本升級不會動它——保留了自建 pipeline 的控制權，
+        但也放棄了「升 operator＝升全部 collector」的治理紅利。Collector 版本的治理責任仍在自己的 image pipeline。
+      </p>
+      <p>
+        建議做法：<strong>agent 交給 operator 治理（不 pin），collector 維持自建</strong>——兩者的客製需求不同（collector 有公司內部 exporter/processor 的需求，agent 沒有）。
+        自建 image 的升級節奏要跟 operator 版本對表（operator 解析 config 推導 port/RBAC，跨大版本的 config schema 變更兩邊要同步驗）。
+      </p>
+      <p>
+        平台治理團隊要盯版本，不用一個一個查 <code>versions.txt</code> 對照 changelog——官方所有元件的 image
+        都發佈在<strong>同一個地方</strong>：<a href="https://github.com/orgs/open-telemetry/packages?repo_name=opentelemetry-operator">github.com/orgs/open-telemetry/packages</a>（filter
+        成 <code>opentelemetry-operator</code> repo）。上面看得到 <code>opentelemetry-operator</code>、
+        <code>target-allocator</code>、<code>operator-opamp-bridge</code> 本體，跟 <code>autoinstrumentation-java</code>／
+        <code>-python</code>／<code>-nodejs</code>／<code>-dotnet</code>／<code>-apache-httpd</code> 這幾個 CR 裡會填的 image，
+        每個 tag 都能反查是哪次 release 帶出來的——決定「哪些交給 operator 自動升、哪些自己 pin 死」之前，先看這裡有沒有新版本。
+      </p>
+      <p class="callout warn">
+        <strong>裡面還有一個 <code>autoinstrumentation-php</code>——但它不代表 PHP 有自動注入。</strong>
+        這個 image 是 <code>autoinstrumentation/php/</code> 目錄建出來的 PECL extension 檔案，純粹提供給要自己組 base image 的團隊拉取；
+        <code>InstrumentationSpec</code> 沒有對應的 <code>php</code> 欄位、也沒有 <code>inject-php</code> annotation——
+        webhook 不會替你把它裝進任何 Pod。跟存量矩陣那節講的一樣：PHP 只能走 <code>inject-sdk</code>，這個 image 只是「原料」，裝進 image 是自己的事。
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ 2.4 CR 粒度 ============ -->
+  <section id="granularity">
+    <div class="prose wide">
+      <p class="eyebrow">第二部：治理 · CR 粒度</p>
+      <h2>CR 的邊界＝爆炸半徑的邊界</h2>
+      <p>兩種 CR 的客製化語意天差地遠，決定了「什麼時候該拆 CR」。</p>
+    </div>
+    <div class="table-scroll">
+      <table class="dtable">
+        <thead><tr><th></th><th>Sidecar collector CR</th><th>Instrumentation CR</th></tr></thead>
+        <tbody>
+          <tr><td class="k">客製化語意</td><td>Config 整份取代，無欄位優先權</td><td>Env 逐項合併（append-if-not-set）</td></tr>
+          <tr><td class="k">「這個服務想不一樣」</td><td>只能 clone 一份 CR</td><td>多數情況不用 clone——值留在 app 自己的 env 就贏了</td></tr>
+          <tr><td class="k">拆分判準</td><td>需求會分岔的團隊，現在就拆</td><td>只有「endpoint/sampler/image/resources 這種 CR 層欄位」要不一樣時才拆</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose wide">
+      <p style="margin-top:16px;">
+        <strong><code>image</code>／<code>resources</code> 屬於「CR 層欄位」，沒有 Pod 端覆蓋的逃生門。</strong>
+        查過 <code>internal/instrumentation/annotation.go</code> 全部的 annotation，Pod 能動的只有 <code>inject-&lt;lang&gt;</code>、
+        <code>container-names</code>，加上 python/dotnet/go 各自一個輔助 annotation——沒有任何一個能在 Pod 層級覆蓋 agent image。
+        跟 <code>env</code> 不同（四層合併，container 自己的值天生贏），<code>image</code> 就是整份 CR 共用一個值，誰引用就套誰。
+        某個服務想先試新版 agent、其他服務不動，唯一做法是 clone 一份 CR 讓那個服務的 annotation 改指過去。
+      </p>
+      <p>不同語言要用不同版本，倒是同一份 CR 內建就會的事——每個語言各自一個獨立的 <code>image</code> 欄位，互不影響：</p>
+    </div>
+    <div class="snippet">apiVersion: opentelemetry.io/v1alpha1
+<span class="c">kind: Instrumentation</span>
+metadata:
+  name: company-default
+  namespace: opentelemetry
+spec:
+  exporter:
+    endpoint: http://gateway-collector.open-telemetry.svc:4318
+  sampler:
+    type: parentbased_traceidratio
+    argument: "0.25"
+
+  java:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:<span class="hl">2.28.1</span>
+  python:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:<span class="hl">0.63b1</span>
+  nodejs:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs:<span class="hl">0.203.0</span></div>
+    <div class="prose wide">
+      <p>
+        Pod 端的 <code>instrumentation.opentelemetry.io/inject-python</code> annotation 指到這份 CR 時，operator 只挑
+        <code>spec.python</code> 那一段來用；同一份 CR 被 <code>inject-java</code> 的 Pod 引用時，只挑 <code>spec.java</code>——
+        彼此互不干擾，不用因為語言不同就拆成多份 CR。
+      </p>
+      <p><strong>Sidecar CR 可以共用嗎？</strong>可以，機制上兩個常見疑慮都不成立：annotation 支援跨 namespace 引用；
+      config 整份 inline 進 <code>OTEL_CONFIG</code> env，不落地任何 ConfigMap；per-pod metadata 是注入當下逐 Pod 計算的，不是從 CR 來的。
+      一份共用 CR，N 個 Pod 各自拿到正確身分。</p>
+      <p>共用的真正約束是三條：</p>
+      <ol>
+        <li>Config 必須 namespace 中立——exporter endpoint 用 FQDN。</li>
+        <li>避開 <code>spec.configMaps</code>/<code>spec.volumes</code>/secretKeyRef——這些以 <code>LocalObjectReference</code> 在 Pod 的 namespace 解析。</li>
+        <li>Config 無合併語意——per-service 差異只能 clone。</li>
+      </ol>
+      <p class="callout">Webhook 用 operator 的權限讀 CR，沒有「誰有資格引用哪份 CR」的授權檢查——per-team CR 防不了被別的團隊誤指，防線是 annotation 的 code review。</p>
+    </div>
+
+    <div class="snippet-cap">兩種 processor 各一段</div>
+    <div class="snippet">processors:
+  attributes/order_team:           <span class="c"># 固定標籤：attributes processor 就夠</span>
+    actions:
+      - { key: team,        value: "order-team", action: insert }
+      - { key: cost_center, value: "CC-4821",    action: insert }
+  transform/order_team:            <span class="c"># 條件 + regex 遮罩：才需要 OTTL</span>
+    trace_statements:
+      - context: span
+        statements:
+          - replace_pattern(attributes["db.statement"],
+              <span class="hl">"(?i)VALUES\\s*\\([^)]*\\)"</span>, "VALUES (***redacted***)")
+            where attributes["db.statement"] != nil</div>
+    <div class="prose wide">
+      <p>選型法則：固定 key/value 用 <code>attributes</code>；條件、regex、跨欄位才上 <code>transform</code>（OTTL）；合規更嚴用 <code>delete_key</code>。</p>
+      <p class="callout warn">一條實測教訓：Hibernate 產小寫 <code>values</code>，沒加上面那個 <code>(?i)</code> 的遮罩規則<strong>靜默不匹配</strong>——語法全對、collector 不報錯、資料照漏。OTTL 政策上線前要拿真實流量驗證命中率。</p>
+    </div>
+  </section>
+
+  <!-- ============ 2.5 延伸路 ============ -->
+  <section id="extensions" class="minor">
+    <div class="prose wide">
+      <p class="eyebrow">第二部：治理 · 兩條延伸路</p>
+      <h2>TargetAllocator 與 OpAMP</h2>
+      <p>
+        <strong>TargetAllocator</strong>——現有 ServiceMonitor 資產有現成的收編路。若未來 metrics 也要進 OTel 管線，
+        TA 的 <code>prometheusCR.enabled</code> 直接認得現有 ServiceMonitor/PodMonitor，各團隊已寫好的 monitor 一個都不用改。
+      </p>
+      <p>
+        <strong>OpAMP</strong>——多環境的控制面選項。每個 cluster 跑一個 bridge，把該 cluster 裡 operator 管的所有 collector 代理給遠端控制面：
+        回報 effective config、接受下推（回寫 CR，滾動更新交回 operator）、<code>componentsAllowed</code> 當白名單安全閥。
+      </p>
+      <p class="callout warn">
+        它跟 GitOps 是競合關係——同一份 CR 不能同時被 ArgoCD 和 OpAMP server 當 source of truth，選了 OpAMP 下推的欄位就要從 Git 管理範圍拿掉，否則兩個控制面互相打架。多環境如果 GitOps 已經順，OpAMP 的增量價值在「秒級動態調參」而不是常規變更。
+      </p>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ============ static: failure matrix ============ -->
+  <section id="matrix">
+    <div class="prose wide">
+      <p class="eyebrow">收尾</p>
+      <h2>引入 operator 後，什麼變脆了</h2>
+      <p>
+        現況（Helm 把注入烤死在 chart 裡）沒有 runtime 依賴；operator 把自己放進了兩條路徑。
+        這張表不是恐嚇，是把上面七個機制的邊界收斂成一份 runbook 檢查清單。
+      </p>
+    </div>
+    <div class="table-scroll">
+      <table class="dtable">
+        <thead>
+          <tr><th>情境</th><th>已在跑的 Pod</th><th>新建 / 重啟的 Pod</th><th>中央 gateway / agent</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="k">operator Pod 掛掉</td>
+            <td>不受影響（注入物已烤進 Pod）</td>
+            <td>建得起來，但安靜地沒被注入（機制五）</td>
+            <td>不受影響，但 CR 變更不再收斂</td>
+          </tr>
+          <tr>
+            <td class="k">webhook cert 失效</td>
+            <td>不受影響</td>
+            <td>同上，安靜失敗</td>
+            <td>不受影響</td>
+          </tr>
+          <tr>
+            <td class="k">CRD 被誤刪</td>
+            <td>不受影響</td>
+            <td>注入失效</td>
+            <td>級聯刪除所有 CR 與衍生資源</td>
+          </tr>
+          <tr>
+            <td class="k">CR 被誤改</td>
+            <td>注入類：不受影響直到 rollout</td>
+            <td>拿到錯的政策</td>
+            <td>立刻 rolling update 到錯的狀態</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="prose wide">
+      <p style="margin-top:16px;">配套（寫進 runbook 的具體項）：operator 本身的 HA 與監控、覆蓋率盤點、CRD 納入備份、OTTL 規則上線前的真實流量驗證、「政策收斂率」指標。</p>
+    </div>
+  </section>
+
+  <!-- ============ LAB 4: failurePolicy ============ -->
+  <section id="lab-failure">
+    <div class="prose">
+      <p class="eyebrow">機制五 · 可用性 vs 政策完整性</p>
+      <h2><code>failurePolicy</code> 決定 webhook 掛掉時 Pod 怎麼辦</h2>
+      <p>
+        呼應決策二與上面的失效模式矩陣：這個欄位就是「operator Pod 掛掉」那一格在部署層的開關。
+      </p>
+    </div>
+
+    <div class="lab">
+      <div class="lab-head">
+        <p class="eyebrow">互動實驗</p>
+        <h3>組合 failurePolicy 與 webhook 健康狀態</h3>
+        <p class="goal">這裡指的是負責 sidecar / instrumentation 注入的 pod mutation webhook，不是 CR 驗證用的那個。</p>
+      </div>
+      <div class="lab-body">
+        <div class="lab-controls">
+          <div>
+            <span class="ctrl-label">admissionWebhooks.pods.failurePolicy</span>
+            <div class="seg row" id="fp-seg">
+              <button type="button" data-fp="ignore" aria-pressed="true">Ignore（預設）</button>
+              <button type="button" data-fp="fail" aria-pressed="false">Fail</button>
+            </div>
+          </div>
+          <div>
+            <span class="ctrl-label">webhook 目前狀態</span>
+            <div class="seg row" id="wh-seg">
+              <button type="button" data-wh="up" aria-pressed="true">正常</button>
+              <button type="button" data-wh="down" aria-pressed="false">中斷</button>
+            </div>
+          </div>
+        </div>
+        <div class="lab-output">
+          <p class="pane-label result">結果</p>
+          <div class="status-grid">
+            <div class="status-row"><span class="lbl">Pod 建立請求</span><span id="fp-created"></span></div>
+            <div class="status-row"><span class="lbl">Sidecar / instrumentation 注入</span><span id="fp-injected"></span></div>
+          </div>
+          <div class="lab-note" id="fp-note"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 3.2 落地路徑 ============ -->
+  <section id="rollout">
+    <div class="prose wide">
+      <p class="eyebrow">收尾 · 落地路徑</p>
+      <h2>對應現況的五個階段</h2>
+    </div>
+    <ol class="phases">
+      <li><strong>Helm 裝 operator；中央 collector 不動。</strong>對業務團隊的成本：零。</li>
+      <li><strong>平台建兩份 Instrumentation CR（直送版/sidecar 版）+ 標準 sidecar CR</strong>；新服務與無 OTel 服務接入。對業務團隊的成本：兩三行 annotation。</li>
+      <li><strong>手動裝過 OTel 的服務逐一遷移</strong>（llm-guard-api 模式：留 API、去 provider；拆 base image 旗標）。一次性遷移，每步可回退。</li>
+      <li><strong>中央 collector 搬進 CR</strong>，agent+gateway 拓撲補上 traceID routing，灰度切換。對業務團隊的成本：零。</li>
+      <li><strong>視需求：</strong>TA 收編 metrics、OpAMP 上多環境控制面、業務客製走專屬 sidecar CR。各團隊自理。</li>
+    </ol>
+    <div class="prose wide">
+      <p style="margin-top:16px;"><strong>遷移論證的核心：</strong>遷移前，observability 設定散落在 app 的 Helm values，改政策＝改 app 部署；遷移後收斂到 CR，
+      app 部署與 observability 政策解耦——同時每個服務刪掉一份手工複製的 k8s 屬性拼裝邏輯。</p>
+    </div>
+  </section>
+
+  <!-- ============ 收尾 三句話 ============ -->
+  <section id="close">
+    <div class="prose wide">
+      <p class="eyebrow">帶走的三句話</p>
+      <h2>如果只記得三件事</h2>
+    </div>
+    <div class="close-block">
+      <ol>
+        <li><strong>擴散靠把介面壓窄</strong>：平台擁有政策（CR），業務團隊只表達意圖（annotation）；env 合併語意讓例外留在 app 端，不腐蝕共用範本。</li>
+        <li><strong>治理靠迴圈，不靠自律</strong>：Helm 管交付、operator 管執行期；但兩種執行點的政策生效語意不同，收斂要量測。</li>
+        <li><strong>知道機制的邊界</strong>：注入 best-effort、惰性生效、CRD 生命週期、自建 image 讓出的治理紅利——這些寫進 runbook 與架構決策記錄，而不是被它們 surprise。</li>
+      </ol>
+    </div>
+
+    <div class="prose wide">
+      <p class="eyebrow" style="margin-top:32px;">留給團隊的開放問題</p>
+      <div class="open-q">
+        <p class="q">中央 collector 搬 CR 的階段二，切流量放 sidecar CR 的 endpoint 還是留 alias Service？（前者可灰度、後者不動業務 CR）</p>
+        <p class="q">Collector 自建 image 的升級節奏，要不要跟 operator 版本對表、由誰 own？</p>
+        <p class="q">OpAMP 與現有 GitOps 的邊界怎麼劃——哪些欄位允許控制面動態下推？</p>
+        <p class="q">Base image 裡還有哪些像 <code>OTEL_ZERO_CODE_MODE</code> 這種自帶的 OTel 邏輯？覆蓋率指標的偵測要放在哪裡跑？</p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  每個互動實驗的行為都對照 repo 內對應檔案的實際邏輯；改動只發生在這個頁面裡，不影響任何叢集狀態。
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  function seg(container, attr, onChange) {
+    var buttons = container.querySelectorAll("button");
+    buttons.forEach(function (b) {
+      b.addEventListener("click", function () {
+        buttons.forEach(function (x) { x.setAttribute("aria-pressed", "false"); });
+        b.setAttribute("aria-pressed", "true");
+        onChange(b.getAttribute(attr));
+      });
+    });
+  }
+
+  /* ---------- LAB 0: convergence speed ---------- */
+  var convergeServices = [
+    { pill: "gw", kind: "gateway" },
+    { pill: "checkout", nextRedeploy: 2 },
+    { pill: "notify", nextRedeploy: 9 },
+    { pill: "legacy", nextRedeploy: 60 }
+  ];
+  function renderConverge(day) {
+    day = parseInt(day, 10);
+    var covered = 0;
+    convergeServices.forEach(function (s) {
+      var ok = s.kind === "gateway" || day >= s.nextRedeploy;
+      if (ok) covered++;
+      document.getElementById("converge-pill-" + s.pill).innerHTML = ok
+        ? '<span class="pill ok">已收斂（新政策）</span>'
+        : '<span class="pill warn">舊政策（尚未收斂）</span>';
+    });
+    var total = convergeServices.length;
+    var banner = document.getElementById("converge-coverage");
+    banner.classList.remove("warn");
+    if (covered === total) {
+      banner.textContent = "政策覆蓋率 " + covered + " / " + total + "　— 全部目標都已拿到新版政策";
+    } else {
+      banner.classList.add("warn");
+      banner.textContent = "政策覆蓋率 " + covered + " / " + total + "　— 還有 " + (total - covered) + " 個目標在跑舊政策，且沒有機制會主動推它們";
+    }
+  }
+  seg(document.getElementById("converge-seg"), "data-day", renderConverge);
+  renderConverge(0);
+
+  /* ---------- LAB 1: mode ---------- */
+  var modeData = {
+    deployment: {
+      resources: [
+        ["Deployment", "gateway-collector", "2/2"],
+        ["Service", "gateway-collector", "4317/TCP,4318/TCP"],
+        ["Service", "gateway-collector-headless", "clusterIP: None"],
+        ["Service", "gateway-collector-monitoring", "8888/TCP"],
+        ["ConfigMap", "gateway-collector-&lt;hash&gt;", ""]
+      ],
+      note: "一般 gateway：立刻觸發 rolling update。headless service 一樣會建，但只有在 statefulset 模式下才是 load-bearing 的。"
+    },
+    daemonset: {
+      resources: [
+        ["DaemonSet", "gateway-collector", "每節點一份"],
+        ["Service", "gateway-collector", "4317/TCP,4318/TCP"],
+        ["Service", "gateway-collector-headless", "clusterIP: None"],
+        ["Service", "gateway-collector-monitoring", "8888/TCP"],
+        ["ConfigMap", "gateway-collector-&lt;hash&gt;", ""]
+      ],
+      note: "agent 模式：每個節點一份副本，通常用來就近收 sidecar／host 層的資料再轉送 gateway。"
+    },
+    statefulset: {
+      resources: [
+        ["StatefulSet", "gateway-collector", "2/2，副本身分穩定"],
+        ["Service", "gateway-collector", "4317/TCP,4318/TCP"],
+        ["Service", "gateway-collector-headless", "clusterIP: None ← load-bearing"],
+        ["Service", "gateway-collector-monitoring", "8888/TCP"],
+        ["ConfigMap", "gateway-collector-&lt;hash&gt;", ""]
+      ],
+      note: "Tail sampling gateway 唯一正確的選擇：load_balancing exporter 的 dns resolver 要靠 headless service 枚舉每個副本的 A record，按 traceID 直連——查普通 ClusterIP 只會拿到 VIP。"
+    },
+    sidecar: {
+      resources: [],
+      note: "不產生任何獨立 workload。CR 變成範本；等某個 Pod 帶 sidecar.opentelemetry.io/inject annotation 建立時，由 mutating webhook 把整份 config inline 進 OTEL_CONFIG env 注入進去——沒有 Pod 建立，這份 CR 什麼都不會發生。"
+    }
+  };
+
+  function renderMode(mode) {
+    var d = modeData[mode];
+    var out = document.getElementById("mode-readout");
+    if (d.resources.length === 0) {
+      out.innerHTML = '<span class="comment"># kubectl get deploy,sts,ds,svc,cm -l app.kubernetes.io/instance=default.gateway</span>\n<span class="muted">(無任何資源被建立)</span>';
+    } else {
+      var lines = ['<span class="comment"># kubectl get deploy,sts,ds,svc,cm -l app.kubernetes.io/instance=default.gateway</span>'];
+      d.resources.forEach(function (r) {
+        var kind = r[0].toLowerCase() + "/" + r[1];
+        lines.push('<span class="k8s-kind">' + kind.padEnd(38) + '</span>' + r[2]);
+      });
+      out.innerHTML = lines.join("\n");
+    }
+    document.getElementById("mode-note").textContent = d.note;
+  }
+  seg(document.getElementById("mode-seg"), "data-mode", renderMode);
+  renderMode("deployment");
+
+  /* ---------- LAB 2: ports ---------- */
+  var recvDefs = {
+    otlp: { yaml: "otlp:\n  protocols:\n    grpc: {}\n    http: {}", ports: [["otlp-grpc", "TCP", 4317], ["otlp-http", "TCP", 4318]] },
+    jaeger: { yaml: "jaeger:\n  protocols:\n    grpc: {}\n    thrift_http: {}", ports: [["jaeger-grpc", "TCP", 14250], ["jaeger-thrift-http", "TCP", 14268]] },
+    zipkin: { yaml: "zipkin: {}", ports: [["zipkin", "TCP", 9411]] },
+    custom: { yaml: "104corp_syslog:\n  listen_address: 0.0.0.0:5140", ports: [] }
+  };
+
+  function renderPorts() {
+    var checks = document.querySelectorAll("#port-checks input[type=checkbox]");
+    var yamlParts = [];
+    var allPorts = [];
+    var customOn = false;
+    checks.forEach(function (c) {
+      var item = c.closest(".check-item");
+      item.classList.toggle("on", c.checked);
+      if (c.checked) {
+        var d = recvDefs[c.getAttribute("data-recv")];
+        yamlParts.push(d.yaml);
+        allPorts = allPorts.concat(d.ports);
+        if (c.getAttribute("data-recv") === "custom") customOn = true;
+      }
+    });
+    var note = document.getElementById("port-note");
+    note.innerHTML = customOn
+      ? '<strong>104corp_syslog 已接進 config，但右邊沒有多出任何 port</strong>——operator 的內建 mapping 表不認得它，不會報錯也不會阻擋，就是安靜地不推導。這種 receiver 要靠 <code>spec.ports</code> 手動補一筆（下方有寫法）。<span class="cite">internal/manifests/collector/service.go:145</span>'
+      : '只有<strong>接進 pipeline</strong>的 receiver 才會被掃到——config 裡定義了 receiver 但沒接進任何 pipeline，port 不會出現。<span class="cite">internal/manifests/collector/service.go:145</span>';
+    var yamlOut = document.getElementById("port-yaml");
+    yamlOut.innerHTML = '<span class="comment">receivers:</span>\n' + (yamlParts.length
+      ? yamlParts.map(function (p) { return p.split("\n").map(function (l) { return "  " + l; }).join("\n"); }).join("\n")
+      : '  <span class="muted">(無 receiver 接進 pipeline)</span>');
+
+    var tbody = document.querySelector("#port-table tbody");
+    tbody.innerHTML = "";
+    if (allPorts.length === 0) {
+      tbody.innerHTML = '<tr class="empty"><td colspan="3">Service 不會開任何 port</td></tr>';
+    } else {
+      allPorts.forEach(function (p) {
+        var tr = document.createElement("tr");
+        tr.innerHTML = "<td>" + p[0] + "</td><td>" + p[1] + "</td><td class='num'>" + p[2] + "</td>";
+        tbody.appendChild(tr);
+      });
+    }
+  }
+  document.querySelectorAll("#port-checks input[type=checkbox]").forEach(function (c) {
+    c.addEventListener("change", renderPorts);
+  });
+  renderPorts();
+
+  /* ---------- LAB 3: env merge ---------- */
+  var envLayerNames = ["container 原生 env", "語言區段 env（python）", "共用 env（spec.env）", "CR 欄位推導值"];
+  function renderEnv() {
+    var rows = document.querySelectorAll("#env-rows .env-row");
+    var winnerIdx = -1;
+    var winnerVal = "";
+    rows.forEach(function (row, i) {
+      var cb = row.querySelector('input[type="checkbox"]');
+      var txt = row.querySelector('input[type="text"]');
+      txt.disabled = !cb.checked;
+      if (!cb.checked) txt.placeholder = "未設定";
+      row.classList.remove("winner");
+      if (cb.checked && winnerIdx === -1 && txt.value.trim() !== "") {
+        winnerIdx = i;
+        winnerVal = txt.value.trim();
+      }
+    });
+    var banner = document.getElementById("env-resolved");
+    if (winnerIdx === -1) {
+      banner.classList.add("fallback");
+      banner.textContent = "OTEL_SERVICE_NAME 未被任何一層設定 → 落回推導鏈（annotation → workload 名稱 → Pod 名）";
+    } else {
+      banner.classList.remove("fallback");
+      rows[winnerIdx].classList.add("winner");
+      banner.textContent = "OTEL_SERVICE_NAME=" + winnerVal + "　← 由第 " + (winnerIdx + 1) + " 層「" + envLayerNames[winnerIdx] + "」決定，其餘層即使有值也被忽略";
+    }
+  }
+  document.querySelectorAll("#env-rows input").forEach(function (el) {
+    el.addEventListener("input", renderEnv);
+    el.addEventListener("change", renderEnv);
+  });
+  renderEnv();
+
+  /* ---------- LAB 4: failurePolicy ---------- */
+  var fpState = { fp: "ignore", wh: "up" };
+  function renderFP() {
+    var created, injected, note;
+    if (fpState.wh === "up") {
+      created = ["ok", "已建立"];
+      injected = ["ok", "已注入"];
+      note = "webhook 正常時，Ignore 與 Fail 的行為一致——差異只在 webhook 掛掉的那一刻才會顯現。";
+    } else if (fpState.fp === "ignore") {
+      created = ["ok", "已建立"];
+      injected = ["warn", "未注入（靜默失敗）"];
+      note = "決策二的核心行為：可用性優先於政策完整性。業務部署不會被 observability 元件擋下，但覆蓋率因此需要另外量測。";
+    } else {
+      created = ["danger", "被拒絕（API server 擋下）"];
+      injected = ["danger", "不適用"];
+      note = "改成 Fail 就是反過來：政策完整性優先於可用性——webhook 不可用時，連 Pod 都建不起來。";
+    }
+    var c = document.getElementById("fp-created");
+    var i = document.getElementById("fp-injected");
+    c.innerHTML = '<span class="pill ' + created[0] + '">' + created[1] + '</span>';
+    i.innerHTML = '<span class="pill ' + injected[0] + '">' + injected[1] + '</span>';
+    document.getElementById("fp-note").textContent = note;
+  }
+  seg(document.getElementById("fp-seg"), "data-fp", function (v) { fpState.fp = v; renderFP(); });
+  seg(document.getElementById("wh-seg"), "data-wh", function (v) { fpState.wh = v; renderFP(); });
+  renderFP();
+
+  /* ---------- LAB 5: sidecar endpoint ---------- */
+  function renderEp(ep) {
+    var target = document.getElementById("ep-target");
+    var arrow = document.getElementById("ep-arrow");
+    var envOut = document.getElementById("ep-env");
+    if (ep === "empty") {
+      target.textContent = "同 Pod 的 sidecar（localhost:4318）";
+      target.classList.add("active");
+      arrow.classList.add("active");
+      envOut.innerHTML = '<span class="comment"># OTEL_EXPORTER_OTLP_ENDPOINT 未被注入</span>\n<span class="muted">SDK 使用內建預設值 http://localhost:4318</span>';
+    } else {
+      target.textContent = "gateway-collector.open-telemetry.svc";
+      target.classList.add("active");
+      arrow.classList.add("active");
+      envOut.innerHTML = '<span class="flag">OTEL_EXPORTER_OTLP_ENDPOINT</span>=http://gateway-collector.open-telemetry.svc:4318\n<span class="comment"># 直送 gateway，繞過同 Pod 的 sidecar</span>';
+    }
+  }
+  seg(document.getElementById("ep-seg"), "data-ep", renderEp);
+  renderEp("empty");
+
+  /* ---------- LAB 6: trace routing ---------- */
+  var traceLayouts = {
+    on: [["a", "a", "a"], ["b", "b", "b"], ["c", "c", "c"]],
+    off: [["a", "b", "c"], ["b", "c", "a"], ["c", "a", "b"]]
+  };
+  function renderTrace(rk) {
+    var grid = document.getElementById("trace-grid");
+    var layout = traceLayouts[rk];
+    grid.innerHTML = "";
+    layout.forEach(function (col, idx) {
+      var div = document.createElement("div");
+      div.className = "trace-col";
+      var dots = col.map(function (t) { return '<span class="dot ' + t + '"></span>'; }).join("");
+      div.innerHTML = "<h4>gateway-" + idx + "</h4><div class='trace-dots'>" + dots + "</div>";
+      grid.appendChild(div);
+    });
+    document.getElementById("trace-ratio").innerHTML = rk === "on"
+      ? '<span class="pill ok">100%（每條 trace 完整落在單一副本）</span>'
+      : '<span class="pill danger">0%（每條 trace 都被拆到三個副本）</span>';
+  }
+  seg(document.getElementById("rk-seg"), "data-rk", renderTrace);
+  renderTrace("on");
+
+})();
+</script>
