@@ -2,18 +2,20 @@
 change_type: bug_fix
 
 # The name of the component, or a single word describing the area of concern, (e.g. collector, target allocator, auto-instrumentation, opamp, github action)
-component: target allocator
+component: collector
 
 # A brief description of the change. Surround your text with quotes ("") if it needs to start with a backtick (`).
-note: Fix silent target loss when group labels are present in static_configs by sorting labels globally in processTargetGroups.
+note: Collectors with persistent storage no longer fail with "permission denied" on OpenShift when running under a permissive SCC such as anyuid.
 
 # One or more tracking issues related to the change
-issues: [4967]
+issues: [5224]
 
 # (Optional) One or more lines of additional information to render under the primary note.
 # These lines will be padded with 2 spaces and then inserted directly into the document.
 # Use pipe (|) for multiline entries.
 subtext: |
-  ScratchBuilder.Labels() serializes labels in insertion order. When group labels sort
-  alphabetically after target labels (e.g. vendor > __address__), Labels.Get() early
-  termination returns empty, causing hash collisions that silently drop targets.
+  On OpenShift, the restricted SCC injects fsGroup from the namespace range, but
+  permissive SCCs (e.g. anyuid) do not. The controller now defaults
+  podSecurityContext.fsGroup from the namespace's supplemental-groups or UID range
+  annotation when no explicit fsGroup is configured. An explicitly set fsGroup is
+  never overwritten.
