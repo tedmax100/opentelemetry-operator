@@ -1,0 +1,8 @@
+vendor/
+node_modules/
+.env
+.git/
+database/database.sqlite
+storage/logs/*
+bootstrap/cache/*.php
+Dockerfile

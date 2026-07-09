@@ -1,0 +1,35 @@
+# traffic-gen 更新版：交替打 payment /pay 與 shipping /ship
+# /ship 會串出最長的 trace：shipping(PHP) → payment(Python) → order(Java) → DB x3
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic-gen
+  namespace: otel-lab
+  labels:
+    app: traffic-gen
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traffic-gen
+  template:
+    metadata:
+      labels:
+        app: traffic-gen
+    spec:
+      containers:
+        - name: curl
+          image: curlimages/curl:8.10.1
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              while true; do
+                item=$(( RANDOM % 3 ))
+                case $item in 0) name=widget;; 1) name=gadget;; 2) name=doohickey;; esac
+                amount=$(( RANDOM % 90 + 10 ))
+                curl -s -X POST "http://payment-service:5000/pay?item=${name}&amount=${amount}" > /dev/null
+                sleep 2
+                qty=$(( RANDOM % 5 + 1 ))
+                curl -s -X POST "http://shipping-service/ship?item=${name}&qty=${qty}" > /dev/null
+                sleep 2
+              done

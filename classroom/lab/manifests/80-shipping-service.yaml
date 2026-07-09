@@ -1,0 +1,171 @@
+# 第三個服務：shipping-service（Laravel / PHP-FPM）—— PHP zero-code 配方驗證
+#
+# 跟 Java/Python 的差異：instrumentation（extension + composer 套件）烤在 image 裡，
+# 但 OTEL_* 設定與 sidecar collector 仍由 Operator 注入：
+#   - sidecar.opentelemetry.io/inject: 注入 sidecar collector（跟 order/payment 同一個 CR，語言無關）
+#   - instrumentation.opentelemetry.io/inject-sdk: 只注入 OTEL_* env（endpoint/service.name/
+#     resource attributes/propagators），不複製任何 agent —— 給「不支援注入的語言」用的官方逃生門
+#
+# Pod 結構：nginx（:80，FastCGI 轉發）+ php-fpm（:9000）+ otc-container（Operator 注入）
+---
+# ---------- MySQL（對齊使用者的 stack；lab 級：emptyDir、單副本）----------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+  namespace: otel-lab
+  labels:
+    app: mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              value: rootpass
+            - name: MYSQL_DATABASE
+              value: labdb
+            - name: MYSQL_USER
+              value: lab
+            - name: MYSQL_PASSWORD
+              value: labpass
+          ports:
+            - containerPort: 3306
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+          readinessProbe:
+            exec:
+              command: ["mysqladmin", "ping", "-h", "127.0.0.1", "-plabpass", "-ulab"]
+            initialDelaySeconds: 15
+            periodSeconds: 5
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: otel-lab
+spec:
+  selector:
+    app: mysql
+  ports:
+    - port: 3306
+      targetPort: 3306
+---
+# ---------- nginx 設定：全部轉給同 Pod 的 FPM，SCRIPT_FILENAME 固定指到 Laravel 入口 ----------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shipping-nginx-config
+  namespace: otel-lab
+data:
+  default.conf: |
+    server {
+      listen 80;
+      location / {
+        include fastcgi_params;
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_param SCRIPT_FILENAME /var/www/html/public/index.php;
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shipping-service
+  namespace: otel-lab
+  labels:
+    app: shipping-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shipping-service
+  template:
+    metadata:
+      labels:
+        app: shipping-service
+      annotations:
+        sidecar.opentelemetry.io/inject: "app-sidecar"
+        instrumentation.opentelemetry.io/inject-sdk: "lab-instrumentation"
+        instrumentation.opentelemetry.io/container-names: "shipping-service"
+    spec:
+      containers:
+        - name: shipping-service
+          image: shipping-service:lab
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9000
+          env:
+            - name: APP_KEY
+              value: "base64:fd2hyc43VN07FkmCsZtEh3m80PcFQrDVhORb6yJY2s4="
+            - name: APP_ENV
+              value: production
+            - name: APP_DEBUG
+              value: "true"          # lab 用，方便看錯誤
+            - name: LOG_CHANNEL
+              value: stderr           # container log 也留一份；LogWatcher 照樣送 OTLP
+            - name: DB_CONNECTION
+              value: mysql
+            - name: DB_HOST
+              value: mysql
+            - name: DB_PORT
+              value: "3306"
+            - name: DB_DATABASE
+              value: labdb
+            - name: DB_USERNAME
+              value: lab
+            - name: DB_PASSWORD
+              value: labpass
+            - name: SESSION_DRIVER
+              value: array            # 不用 DB session，避免要跑 migration
+            - name: CACHE_STORE
+              value: array
+            - name: PAYMENT_SERVICE_URL
+              value: http://payment-service:5000
+          readinessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d
+          readinessProbe:
+            httpGet:
+              path: /up          # Laravel 12 內建 health route
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: shipping-nginx-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shipping-service
+  namespace: otel-lab
+spec:
+  selector:
+    app: shipping-service
+  ports:
+    - port: 80
+      targetPort: 80
