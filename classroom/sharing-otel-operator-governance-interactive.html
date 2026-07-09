@@ -1338,6 +1338,20 @@ spec:
         是 Helm 交付物從 workload 變成 CR。
       </p>
     </div>
+
+    <div class="callout">
+      <strong>官方立場對得上這裡的推導。</strong> OpenTelemetry 官方
+      <a href="https://opentelemetry.io/docs/guidance/blueprints/managed-telemetry-platforms-for-k8s-workloads/#action-3">Managed Telemetry Platforms for K8s Workloads</a>
+      這份 blueprint，Action 3（部署 collector gateway）把 Operator 跟官方 Helm Chart 並列為建議路線，理由收斂成四點：
+      <strong>抽象掉 K8s boilerplate</strong>（不用自己刻 Deployment/Service/ConfigMap，見機制二、機制三的 port 推導）、
+      <strong>與 auto-instrumentation 的整合綜效</strong>（已經用 Operator 做注入時，順手用同一個 CR 模型管 collector，運維心智模型不用切兩套）、
+      <strong>比手動維護 K8s manifest 簡化</strong>、以及<strong>相容 GitOps</strong>（CR 版本控管、可稽核——呼應下方坑二那個「CR apply 成功 ≠ collector 起來了」的健康檢查缺口）。
+      文件同一個 Action 裡也列了幾條部署面的具體建議：<code>memory_limiter</code> 放 pipeline 第一個 processor 防電量高峰 OOM、
+      依記憶體而非 CPU 做 HPA、選配 <code>file_storage</code> extension 撐後端斷線期間的資料緩衝、gRPC 匯出走 load balancing——
+      這些全部落在 <code>spec.config</code> 透傳範圍內（決策三），是平台自己在 config 裡寫好，Operator 不用也不會替你決定。
+      <span class="cite">opentelemetry.io/docs/guidance/blueprints/managed-telemetry-platforms-for-k8s-workloads/#action-3</span>
+    </div>
+
     <div class="table-scroll">
       <table class="dtable">
         <thead><tr><th>資源</th><th>擁有者</th></tr></thead>
